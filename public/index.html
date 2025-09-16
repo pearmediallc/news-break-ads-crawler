@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NewsBreak Ads Crawler - Control Panel</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+
+        .control-panel {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+
+        .extraction-form {
+            display: grid;
+            grid-template-columns: 1fr 150px 150px 150px;
+            gap: 15px;
+            align-items: end;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-group label {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+        }
+
+        .form-group input, .form-group select {
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+
+        .btn-success {
+            background: #10b981;
+            color: white;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .status-panel {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 30px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+
+        .status-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .status-running {
+            background: #fbbf24;
+            color: #78350f;
+        }
+
+        .status-completed {
+            background: #34d399;
+            color: #064e3b;
+        }
+
+        .status-failed {
+            background: #f87171;
+            color: #7f1d1d;
+        }
+
+        .status-stopped {
+            background: #9ca3af;
+            color: #1f2937;
+        }
+
+        .logs-container {
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+
+        .stat-number {
+            font-size: 36px;
+            font-weight: bold;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 14px;
+            margin-top: 5px;
+        }
+
+        .ads-container {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+
+        .ads-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .ads-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 20px;
+        }
+
+        .ad-card {
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 15px;
+            transition: all 0.3s;
+        }
+
+        .ad-card:hover {
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            transform: translateY(-2px);
+        }
+
+        .ad-advertiser {
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 8px;
+        }
+
+        .ad-headline {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .ad-body {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+
+        .ad-link {
+            display: inline-block;
+            color: #667eea;
+            text-decoration: none;
+            font-size: 13px;
+            padding: 5px 10px;
+            background: #f3f4f6;
+            border-radius: 6px;
+        }
+
+        .ad-link:hover {
+            background: #667eea;
+            color: white;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .spinner {
+            border: 3px solid #f3f4f6;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .alert-success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .alert-error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .alert-info {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 NewsBreak Ads Crawler Control Panel</h1>
+            <p>Extract and manage advertisements from NewsBreak pages</p>
+        </div>
+
+        <div class="control-panel">
+            <h2>Start New Extraction</h2>
+            <form class="extraction-form" id="extractionForm">
+                <div class="form-group">
+                    <label for="url">NewsBreak URL</label>
+                    <input
+                        type="url"
+                        id="url"
+                        placeholder="https://www.newsbreak.com/new-york-ny"
+                        value="https://www.newsbreak.com/new-york-ny"
+                        required
+                    >
+                </div>
+                <div class="form-group">
+                    <label for="duration">Duration (min)</label>
+                    <input
+                        type="number"
+                        id="duration"
+                        min="1"
+                        max="60"
+                        value="5"
+                        required
+                    >
+                </div>
+                <div class="form-group">
+                    <label for="browser">Browser</label>
+                    <select id="browser">
+                        <option value="chrome">Chrome</option>
+                        <option value="adspower">AdsPower</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn btn-primary" id="startBtn">
+                    🚀 Start Extraction
+                </button>
+            </form>
+        </div>
+
+        <div class="status-panel hidden" id="statusPanel">
+            <div class="status-header">
+                <h3>Extraction Status</h3>
+                <div>
+                    <span class="status-badge" id="statusBadge">Idle</span>
+                    <button class="btn btn-danger" id="stopBtn" onclick="stopExtraction()" disabled>
+                        Stop
+                    </button>
+                </div>
+            </div>
+            <div class="logs-container" id="logsContainer">
+                <div>Waiting for extraction to start...</div>
+            </div>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-number" id="totalAds">0</div>
+                <div class="stat-label">Total Ads</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="uniqueAdvertisers">0</div>
+                <div class="stat-label">Unique Advertisers</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="adsWithLinks">0</div>
+                <div class="stat-label">Ads with Links</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="totalSessions">0</div>
+                <div class="stat-label">Total Sessions</div>
+            </div>
+        </div>
+
+        <div class="ads-container">
+            <div class="ads-header">
+                <h3>Extracted Ads</h3>
+                <div>
+                    <button class="btn btn-success" onclick="refreshAds()">
+                        🔄 Refresh
+                    </button>
+                    <button class="btn btn-success" onclick="exportData('json')">
+                        💾 Export JSON
+                    </button>
+                    <button class="btn btn-success" onclick="exportData('csv')">
+                        📊 Export CSV
+                    </button>
+                    <button class="btn btn-success" onclick="exportExcel()">
+                        📑 Export Excel
+                    </button>
+                </div>
+            </div>
+            <div class="loading" id="adsLoading">
+                <div class="spinner"></div>
+                <p>Loading ads...</p>
+            </div>
+            <div class="ads-grid" id="adsGrid"></div>
+        </div>
+    </div>
+
+    <script>
+        let currentExtractionId = null;
+        let statusCheckInterval = null;
+        let adsData = [];
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            loadStats();
+            loadAds();
+
+            // Set up form submission
+            document.getElementById('extractionForm').addEventListener('submit', startExtraction);
+        });
+
+        async function startExtraction(e) {
+            e.preventDefault();
+
+            const url = document.getElementById('url').value;
+            const duration = document.getElementById('duration').value;
+            const useAdsPower = document.getElementById('browser').value === 'adspower';
+
+            // Disable start button
+            document.getElementById('startBtn').disabled = true;
+
+            try {
+                const response = await fetch('/api/extract/start', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ url, duration, useAdsPower })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    currentExtractionId = data.extractionId;
+                    showStatus('running', `Extraction started (ID: ${currentExtractionId})`);
+                    document.getElementById('statusPanel').classList.remove('hidden');
+                    document.getElementById('stopBtn').disabled = false;
+
+                    // Start monitoring status
+                    startStatusMonitoring();
+                } else {
+                    showAlert('error', data.error || 'Failed to start extraction');
+                    document.getElementById('startBtn').disabled = false;
+                }
+            } catch (error) {
+                showAlert('error', 'Network error: ' + error.message);
+                document.getElementById('startBtn').disabled = false;
+            }
+        }
+
+        async function stopExtraction() {
+            if (!currentExtractionId) return;
+
+            try {
+                const response = await fetch(`/api/extract/stop/${currentExtractionId}`, {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showStatus('stopped', 'Extraction stopped');
+                    stopStatusMonitoring();
+                } else {
+                    showAlert('error', data.error || 'Failed to stop extraction');
+                }
+            } catch (error) {
+                showAlert('error', 'Network error: ' + error.message);
+            }
+        }
+
+        function startStatusMonitoring() {
+            if (statusCheckInterval) clearInterval(statusCheckInterval);
+
+            statusCheckInterval = setInterval(async () => {
+                if (!currentExtractionId) return;
+
+                try {
+                    const response = await fetch(`/api/extract/status/${currentExtractionId}`);
+                    const data = await response.json();
+
+                    if (response.ok) {
+                        updateStatus(data);
+
+                        if (data.status !== 'running') {
+                            stopStatusMonitoring();
+                            loadAds(); // Refresh ads when extraction completes
+                            loadStats();
+                        }
+                    }
+                } catch (error) {
+                    console.error('Status check failed:', error);
+                }
+            }, 2000); // Check every 2 seconds
+        }
+
+        function stopStatusMonitoring() {
+            if (statusCheckInterval) {
+                clearInterval(statusCheckInterval);
+                statusCheckInterval = null;
+            }
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+        }
+
+        function updateStatus(statusData) {
+            showStatus(statusData.status, `Status: ${statusData.status}`);
+
+            // Update logs
+            if (statusData.logs && statusData.logs.length > 0) {
+                const logsContainer = document.getElementById('logsContainer');
+                logsContainer.innerHTML = statusData.logs.map(log =>
+                    `<div>${escapeHtml(log)}</div>`
+                ).join('');
+                logsContainer.scrollTop = logsContainer.scrollHeight;
+            }
+        }
+
+        function showStatus(status, message) {
+            const badge = document.getElementById('statusBadge');
+            badge.textContent = message || status;
+            badge.className = 'status-badge status-' + status;
+        }
+
+        async function loadAds() {
+            document.getElementById('adsLoading').classList.add('active');
+
+            try {
+                const response = await fetch('/api/ads');
+                adsData = await response.json();
+                displayAds(adsData);
+            } catch (error) {
+                console.error('Failed to load ads:', error);
+                showAlert('error', 'Failed to load ads');
+            } finally {
+                document.getElementById('adsLoading').classList.remove('active');
+            }
+        }
+
+        function displayAds(ads) {
+            const grid = document.getElementById('adsGrid');
+
+            if (!ads || ads.length === 0) {
+                grid.innerHTML = '<p>No ads found. Start an extraction to collect ads.</p>';
+                return;
+            }
+
+            grid.innerHTML = ads.map(ad => `
+                <div class="ad-card">
+                    ${ad.advertiser ? `<div class="ad-advertiser">${escapeHtml(ad.advertiser)}</div>` : ''}
+                    ${ad.headline ? `<div class="ad-headline">${escapeHtml(ad.headline)}</div>` : ''}
+                    ${ad.body ? `<div class="ad-body">${escapeHtml(ad.body)}</div>` : ''}
+                    ${ad.link ? `<a href="${ad.link}" target="_blank" class="ad-link">🔗 Visit Ad</a>` : ''}
+                </div>
+            `).join('');
+        }
+
+        async function loadStats() {
+            try {
+                const [adsResponse, sessionsResponse] = await Promise.all([
+                    fetch('/api/ads'),
+                    fetch('/api/sessions')
+                ]);
+
+                const ads = await adsResponse.json();
+                const sessions = await sessionsResponse.json();
+
+                document.getElementById('totalAds').textContent = ads.length;
+                document.getElementById('uniqueAdvertisers').textContent =
+                    new Set(ads.map(ad => ad.advertiser).filter(a => a)).size;
+                document.getElementById('adsWithLinks').textContent =
+                    ads.filter(ad => ad.link).length;
+                document.getElementById('totalSessions').textContent = sessions.length;
+            } catch (error) {
+                console.error('Failed to load stats:', error);
+            }
+        }
+
+        async function refreshAds() {
+            await loadAds();
+            await loadStats();
+            showAlert('success', 'Data refreshed successfully');
+        }
+
+        async function exportData(format) {
+            try {
+                const response = await fetch(`/api/export/${format}`);
+                const blob = await response.blob();
+
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `newsbreak_ads.${format}`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+
+                showAlert('success', `Exported as ${format.toUpperCase()}`);
+            } catch (error) {
+                showAlert('error', 'Export failed: ' + error.message);
+            }
+        }
+
+        function exportExcel() {
+            if (!adsData || adsData.length === 0) {
+                showAlert('error', 'No data to export');
+                return;
+            }
+
+            const ws = XLSX.utils.json_to_sheet(adsData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Ads');
+            XLSX.writeFile(wb, 'newsbreak_ads.xlsx');
+
+            showAlert('success', 'Exported as Excel');
+        }
+
+        function showAlert(type, message) {
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type}`;
+            alertDiv.textContent = message;
+
+            document.querySelector('.header').appendChild(alertDiv);
+
+            setTimeout(() => {
+                alertDiv.remove();
+            }, 5000);
+        }
+
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        // Auto-refresh ads every 30 seconds
+        setInterval(() => {
+            if (!currentExtractionId || document.getElementById('statusBadge').textContent !== 'running') {
+                loadAds();
+                loadStats();
+            }
+        }, 30000);
+    </script>
+</body>
+</html>
