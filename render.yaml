@@ -2,7 +2,7 @@ services:
   - type: web
     name: newsbreak-ads-crawler
     runtime: docker
-    repo: https://github.com/YOUR-GITHUB-USERNAME/news-break-ads-crawler
+    repo: https://github.com/pearmediallc/news-break-ads-crawler.git
     branch: main
     healthCheckPath: /api/health
     envVars:
