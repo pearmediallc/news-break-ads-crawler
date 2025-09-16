@@ -2,7 +2,7 @@ services:
   - type: web
     name: newsbreak-ads-crawler
     runtime: docker
-    repo: https://github.com/YOUR-COMPANY/news-break-ads-crawler
+    repo: https://github.com/YOUR-GITHUB-USERNAME/news-break-ads-crawler
     branch: main
     healthCheckPath: /api/health
     envVars:
@@ -12,5 +12,5 @@ services:
         value: true
       - key: PUPPETEER_EXECUTABLE_PATH
         value: /usr/bin/google-chrome-stable
-    buildCommand: npm ci --only=production
+    buildCommand: npm install --only=production
     startCommand: node app.js
