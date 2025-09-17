@@ -12,6 +12,11 @@ app.use(express.json());
 app.use(express.static('public'));
 app.use('/data', express.static('data'));
 
+// Health check endpoint for Render
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
+});
+
 // Serve the main dashboard
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -33,14 +38,23 @@ app.post('/api/extract/start', async (req, res) => {
 
     try {
         // Determine which extractor to use
-        const scriptPath = useAdsPower ? 'adsPowerCurrent.js' : 'extractAds.js';
+        const scriptPath = useAdsPower ? 'adsPowerExtractor.js' : 'extractAds.js';
+
+        console.log(`Starting extraction with script: ${scriptPath}`);
+        console.log(`URL: ${url}, Duration: ${durationMinutes} minutes`);
 
         // Start extraction process
         const extractorProcess = spawn('node', [
             scriptPath,
             url,
             durationMinutes.toString()
-        ]);
+        ], {
+            cwd: __dirname,
+            shell: true,  // Changed to true for Windows compatibility
+            windowsHide: false,
+            env: { ...process.env },  // Pass environment variables
+            stdio: ['ignore', 'pipe', 'pipe']  // Proper stdio handling
+        });
 
         // Store process reference
         activeExtractions.set(extractionId, {
@@ -55,19 +69,33 @@ app.post('/api/extract/start', async (req, res) => {
         // Capture output
         extractorProcess.stdout.on('data', (data) => {
             const extraction = activeExtractions.get(extractionId);
+            const output = data.toString();
+            console.log('Extraction output:', output);
             if (extraction) {
-                extraction.logs.push(data.toString());
+                extraction.logs.push(output);
             }
         });
 
         extractorProcess.stderr.on('data', (data) => {
             const extraction = activeExtractions.get(extractionId);
+            const errorMsg = data.toString();
+            console.error('Extraction stderr:', errorMsg);
             if (extraction) {
-                extraction.logs.push(`ERROR: ${data.toString()}`);
+                extraction.logs.push(`ERROR: ${errorMsg}`);
+            }
+        });
+
+        extractorProcess.on('error', (error) => {
+            console.error('Failed to start extraction process:', error);
+            const extraction = activeExtractions.get(extractionId);
+            if (extraction) {
+                extraction.status = 'failed';
+                extraction.logs.push(`SPAWN ERROR: ${error.message}`);
             }
         });
 
         extractorProcess.on('close', (code) => {
+            console.log(`Extraction process exited with code ${code}`);
             const extraction = activeExtractions.get(extractionId);
             if (extraction) {
                 extraction.status = code === 0 ? 'completed' : 'failed';
@@ -129,18 +157,82 @@ app.get('/api/extract/status/:id', (req, res) => {
     });
 });
 
-// API endpoint to get all ads
+// API endpoint to get ads from current or specific session
 app.get('/api/ads', async (req, res) => {
     try {
-        const adsFile = path.join(__dirname, 'data', 'extracted_ads.json');
-        if (await fs.exists(adsFile)) {
-            const ads = await fs.readJson(adsFile);
-            res.json(ads);
+        const { session, refresh } = req.query;
+
+        if (session) {
+            // Load specific session
+            const sessionFile = path.join(__dirname, 'data', 'sessions', session);
+            if (await fs.exists(sessionFile)) {
+                const sessionData = await fs.readJson(sessionFile);
+                res.json(sessionData.ads || []);
+            } else {
+                res.status(404).json({ error: 'Session not found' });
+            }
+        } else {
+            // Load current session
+            const currentSessionFile = path.join(__dirname, 'data', 'current_session.json');
+            if (await fs.exists(currentSessionFile)) {
+                const currentSession = await fs.readJson(currentSessionFile);
+                const sessionFile = path.join(__dirname, 'data', 'sessions', currentSession.sessionFile);
+                if (await fs.exists(sessionFile)) {
+                    const sessionData = await fs.readJson(sessionFile);
+
+                    // If refresh is requested, only return ads from last 5 minutes
+                    if (refresh === 'true') {
+                        const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
+                        const freshAds = (sessionData.ads || []).filter(ad => {
+                            const adTime = new Date(ad.timestamp).getTime();
+                            return adTime > fiveMinutesAgo;
+                        });
+                        res.json(freshAds);
+                    } else {
+                        res.json(sessionData.ads || []);
+                    }
+                } else {
+                    res.json([]);
+                }
+            } else {
+                res.json([]);
+            }
+        }
+    } catch (error) {
+        console.error('Failed to load ads:', error);
+        res.status(500).json({ error: 'Failed to load ads' });
+    }
+});
+
+// API endpoint to get all sessions
+app.get('/api/sessions/list', async (req, res) => {
+    try {
+        const indexFile = path.join(__dirname, 'data', 'sessions', 'index.json');
+        if (await fs.exists(indexFile)) {
+            const sessions = await fs.readJson(indexFile);
+            // Sort by timestamp, newest first
+            sessions.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+            res.json(sessions);
         } else {
             res.json([]);
         }
     } catch (error) {
-        res.status(500).json({ error: 'Failed to load ads' });
+        res.status(500).json({ error: 'Failed to load sessions' });
+    }
+});
+
+// API endpoint to get current session info
+app.get('/api/sessions/current', async (req, res) => {
+    try {
+        const currentSessionFile = path.join(__dirname, 'data', 'current_session.json');
+        if (await fs.exists(currentSessionFile)) {
+            const currentSession = await fs.readJson(currentSessionFile);
+            res.json(currentSession);
+        } else {
+            res.json(null);
+        }
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to load current session' });
     }
 });
 
@@ -223,6 +315,97 @@ function convertToCSV(ads) {
 
     return csvContent;
 }
+
+// API endpoint to create a new session
+app.post('/api/sessions/new', async (req, res) => {
+    try {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const sessionFile = `session_${timestamp}.json`;
+        const sessionPath = path.join(__dirname, 'data', 'sessions', sessionFile);
+
+        // Create new empty session
+        const sessionData = {
+            timestamp: new Date().toISOString(),
+            ads: [],
+            totalAds: 0,
+            advertisers: [],
+            sessionId: timestamp
+        };
+
+        await fs.ensureDir(path.join(__dirname, 'data', 'sessions'));
+        await fs.writeJson(sessionPath, sessionData);
+
+        // Update current session pointer
+        const currentSessionData = {
+            sessionFile,
+            timestamp: sessionData.timestamp,
+            sessionId: timestamp
+        };
+        await fs.writeJson(path.join(__dirname, 'data', 'current_session.json'), currentSessionData);
+
+        // Update sessions index
+        const indexFile = path.join(__dirname, 'data', 'sessions', 'index.json');
+        let sessions = [];
+        if (await fs.exists(indexFile)) {
+            sessions = await fs.readJson(indexFile);
+        }
+
+        sessions.unshift({
+            file: sessionFile,
+            timestamp: sessionData.timestamp,
+            totalAds: 0,
+            sessionId: timestamp
+        });
+
+        // Keep only last 20 sessions
+        sessions = sessions.slice(0, 20);
+        await fs.writeJson(indexFile, sessions);
+
+        res.json({
+            success: true,
+            sessionFile,
+            sessionId: timestamp,
+            message: 'New session created successfully'
+        });
+    } catch (error) {
+        console.error('Failed to create new session:', error);
+        res.status(500).json({ error: 'Failed to create new session' });
+    }
+});
+
+// API endpoint to switch to a different session
+app.post('/api/sessions/switch', async (req, res) => {
+    try {
+        const { sessionFile } = req.body;
+
+        if (!sessionFile) {
+            return res.status(400).json({ error: 'Session file required' });
+        }
+
+        const sessionPath = path.join(__dirname, 'data', 'sessions', sessionFile);
+        if (!(await fs.exists(sessionPath))) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+
+        // Update current session pointer
+        const sessionData = await fs.readJson(sessionPath);
+        const currentSessionData = {
+            sessionFile,
+            timestamp: sessionData.timestamp,
+            sessionId: sessionData.sessionId
+        };
+        await fs.writeJson(path.join(__dirname, 'data', 'current_session.json'), currentSessionData);
+
+        res.json({
+            success: true,
+            sessionFile,
+            message: 'Switched to session successfully'
+        });
+    } catch (error) {
+        console.error('Failed to switch session:', error);
+        res.status(500).json({ error: 'Failed to switch session' });
+    }
+});
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

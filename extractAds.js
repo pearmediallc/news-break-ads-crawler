@@ -20,62 +20,99 @@ class ForYouAdExtractor {
         this.extractedAds = [];
         this.seenAds = new Set();
         this.sessionTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        this.outputFile = path.join(__dirname, 'data', 'extracted_ads.json');
-        this.sessionFile = path.join(__dirname, 'data', 'sessions', `ads_${this.sessionTimestamp}.json`);
+        // Each session gets its own file - don't use the main extracted_ads.json
+        this.sessionFile = path.join(__dirname, 'data', 'sessions', `session_${this.sessionTimestamp}.json`);
+        // Keep a current session pointer
+        this.currentSessionFile = path.join(__dirname, 'data', 'current_session.json');
     }
 
     async init() {
-        // Ensure data directory exists
+        // Ensure data directories exist
         await fs.ensureDir(path.join(__dirname, 'data'));
+        await fs.ensureDir(path.join(__dirname, 'data', 'sessions'));
 
-        // Load existing ads to avoid duplicates
-        if (await fs.exists(this.outputFile)) {
+        // Start fresh for each session - no loading old ads
+        logger.info('Starting new extraction session: ' + this.sessionTimestamp);
+        logger.info('Session file: ' + path.basename(this.sessionFile));
+
+        // First try to connect to AdsPower browser (for USA IP)
+        logger.info('🔗 Attempting to connect to AdsPower browser for USA IP...');
+
+        // Try common AdsPower debug ports (including dynamic ports)
+        const ports = [63707, 49223, 9222, 9223, 9224, 9225, 9226, 49222, 49224, 49225];
+        let connected = false;
+
+        for (const port of ports) {
             try {
-                const existing = await fs.readJson(this.outputFile);
-                this.extractedAds = existing;
-                existing.forEach(ad => {
-                    const key = `${ad.advertiser}_${ad.headline}_${ad.body}`;
-                    this.seenAds.add(key);
+                logger.info(`  Trying port ${port}...`);
+                this.browser = await puppeteer.connect({
+                    browserURL: `http://localhost:${port}`,
+                    defaultViewport: null
                 });
-                logger.info(`Loaded ${existing.length} existing ads`);
-            } catch (error) {
-                logger.info('Starting fresh extraction');
+                logger.info(`✅ Connected to AdsPower on port ${port} - Using USA IP!`);
+                connected = true;
+                break;
+            } catch (e) {
+                // Continue trying other ports
             }
         }
 
-        // Launch browser with visible window to see what's happening
-        const launchOptions = {
-            headless: false,  // VISIBLE BROWSER - to debug ad loading
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox'
-            ]
-        };
+        // If AdsPower not available, fall back to local Chrome
+        if (!connected) {
+            logger.info('⚠️ AdsPower not found, falling back to local Chrome (no USA IP)');
 
-        // If using puppeteer-core, need to specify Chrome path
-        if (isPuppeteerCore) {
-            // Try common Chrome locations
-            const chromePaths = [
-                'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-                'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-                process.env.CHROME_PATH
-            ].filter(Boolean);
+            // Check if running from spawn/server or directly
+            const isSpawned = process.send !== undefined;
 
-            for (const path of chromePaths) {
-                if (require('fs').existsSync(path)) {
-                    launchOptions.executablePath = path;
-                    logger.info(`Using Chrome at: ${path}`);
-                    break;
+            const launchOptions = {
+                headless: isSpawned ? 'new' : false,  // Headless when spawned, visible when run directly
+                args: [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-gpu',
+                    '--disable-dev-shm-usage'
+                ]
+            };
+
+            // If using puppeteer-core, need to specify Chrome path
+            if (isPuppeteerCore) {
+                // Try common Chrome locations
+                const chromePaths = [
+                    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+                    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+                    process.env.CHROME_PATH
+                ].filter(Boolean);
+
+                for (const path of chromePaths) {
+                    if (require('fs').existsSync(path)) {
+                        launchOptions.executablePath = path;
+                        logger.info(`Using Chrome at: ${path}`);
+                        break;
+                    }
                 }
             }
+
+            this.browser = await puppeteer.launch(launchOptions);
         }
 
-        this.browser = await puppeteer.launch(launchOptions);
+        // Get or create page
+        if (connected) {
+            // For AdsPower, use existing page or first available
+            const pages = await this.browser.pages();
+            if (pages.length > 0) {
+                this.page = pages[0];
+                logger.info('📄 Using existing AdsPower tab');
+            } else {
+                this.page = await this.browser.newPage();
+                logger.info('📄 Created new tab in AdsPower');
+            }
+        } else {
+            // For local Chrome, create new page
+            this.page = await this.browser.newPage();
+            await this.page.setViewport({ width: 1920, height: 1080 });
+        }
 
-        this.page = await this.browser.newPage();
-        await this.page.setViewport({ width: 1920, height: 1080 });
-
-        logger.info('Browser ready with visible window - no clicking possible');
+        logger.info('Browser ready - extraction will use USA IP if AdsPower is connected');
     }
 
     async extract(url = 'https://www.newsbreak.com/new-york-ny', scrollDuration = 300000) {
@@ -86,12 +123,35 @@ class ForYouAdExtractor {
 
         // Navigate to main page ONCE with longer timeout
         try {
-            await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+            await this.page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
         } catch (timeoutError) {
             logger.info('Navigation timeout, but continuing anyway...');
             // Continue even if timeout - page might still be loading
         }
-        logger.info('✅ On main page - will NOT navigate anywhere\n');
+        logger.info('✅ On main page - will NOT navigate anywhere');
+
+        // Wait for ForYou containers to load
+        logger.info('⏳ Waiting for ForYou containers to load...');
+        await this.page.waitForTimeout(5000);
+
+        // Check what's on the page
+        const pageInfo = await this.page.evaluate(() => {
+            const forYouContainers = document.querySelectorAll('[id^="ForYou"]');
+            const iframes = document.querySelectorAll('iframe');
+            const sponsoredElements = document.querySelectorAll('[class*="sponsor"], [class*="promoted"], [class*="ad-"]');
+            return {
+                forYouCount: forYouContainers.length,
+                iframeCount: iframes.length,
+                sponsoredCount: sponsoredElements.length,
+                forYouIds: Array.from(forYouContainers).slice(0, 5).map(el => el.id)
+            };
+        });
+
+        logger.info(`📊 Page contains: ${pageInfo.forYouCount} ForYou containers, ${pageInfo.iframeCount} iframes, ${pageInfo.sponsoredCount} sponsored elements`);
+        if (pageInfo.forYouIds.length > 0) {
+            logger.info(`   Sample ForYou IDs: ${pageInfo.forYouIds.join(', ')}`);
+        }
+        logger.info('');
 
         // DISABLE ALL CLICKABLE ELEMENTS
         await this.page.evaluate(() => {
@@ -128,7 +188,7 @@ class ForYouAdExtractor {
         await new Promise(resolve => setTimeout(resolve, 3000));
 
         const scanInterval = 5000;      // 5 seconds
-        const scrollInterval = 15000;   // 15 seconds
+        const scrollInterval = 3000;    // 3 seconds - scroll more frequently
         const maxScans = Math.floor(scrollDuration / scanInterval);
         const maxDuration = scrollDuration;  // User-defined duration
 
@@ -136,8 +196,48 @@ class ForYouAdExtractor {
         let lastScrollTime = Date.now();
         let scanCount = 0;
 
+        // Initial scroll to trigger content loading
+        logger.info('🎬 Starting auto-scroll...');
+        await this.page.evaluate(() => {
+            window.scrollBy(0, 300);
+        });
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
         while (scanCount < maxScans && (Date.now() - startTime < maxDuration)) {
             logger.info(`\n🔍 Scan #${scanCount + 1}`);
+
+            // Scroll BEFORE extracting (scroll first, then extract)
+            if (Date.now() - lastScrollTime >= scrollInterval) {
+                logger.info('📜 Auto-scrolling...');
+
+                // Smooth scroll with multiple small scrolls
+                for (let i = 0; i < 3; i++) {
+                    await this.page.evaluate(() => {
+                        window.scrollBy({
+                            top: window.innerHeight * 0.3,
+                            behavior: 'smooth'
+                        });
+                    });
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+
+                lastScrollTime = Date.now();
+
+                const isAtBottom = await this.page.evaluate(() => {
+                    return window.innerHeight + window.scrollY >= document.body.scrollHeight - 100;
+                });
+
+                if (isAtBottom) {
+                    logger.info('📄 Reached bottom, scrolling to top...');
+                    await this.page.evaluate(() => {
+                        window.scrollTo({
+                            top: 0,
+                            behavior: 'smooth'
+                        });
+                    });
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            }
 
             // Extract ONLY from ForYou containers
             const newAds = await this.extractForYouAds();
@@ -156,22 +256,6 @@ class ForYouAdExtractor {
 
             logger.info(`  Total: ${this.extractedAds.length} ads`);
 
-            // Scroll every 15 seconds
-            if (Date.now() - lastScrollTime >= scrollInterval) {
-                logger.info('\n📜 Scrolling (15 seconds passed)...');
-                await this.page.evaluate(() => window.scrollBy(0, window.innerHeight * 0.7));
-                lastScrollTime = Date.now();
-
-                const isAtBottom = await this.page.evaluate(() => {
-                    return window.innerHeight + window.scrollY >= document.body.scrollHeight - 100;
-                });
-
-                if (isAtBottom) {
-                    logger.info('At bottom, going to top...');
-                    await this.page.evaluate(() => window.scrollTo(0, 0));
-                }
-            }
-
             await new Promise(resolve => setTimeout(resolve, scanInterval));
             scanCount++;
         }
@@ -184,27 +268,85 @@ class ForYouAdExtractor {
         const ads = await this.page.evaluate(() => {
             const foundAds = [];
 
-            // ONLY look for ForYou containers
-            document.querySelectorAll('[id^="ForYou-"]').forEach(container => {
-                const iframe = container.querySelector('iframe.mspai-nova-native');
-                if (!iframe) return;
+            // Look for multiple possible ad container patterns
+            // Pattern 1: ForYou containers (with or without hyphen)
+            document.querySelectorAll('[id^="ForYou"]').forEach(container => {
+                console.log('Found ForYou container:', container.id);
+                const iframe = container.querySelector('iframe');
+                if (iframe) {
+                    console.log('  - Has iframe:', iframe.src || 'no src');
+                    foundAds.push({ container, iframe, type: 'ForYou' });
+                } else {
+                    // Even without iframe, might still be an ad
+                    const hasAdContent = container.querySelector('[class*="sponsor"], [class*="promoted"], [class*="ad"]');
+                    if (hasAdContent) {
+                        console.log('  - Has sponsored content');
+                        foundAds.push({ container, iframe: null, type: 'ForYou-NoIframe' });
+                    }
+                }
+            });
+
+            // Pattern 2: Any iframes with mspai class (common ad iframe class)
+            document.querySelectorAll('iframe[class*="mspai"], iframe[class*="nova"]').forEach(iframe => {
+                // Check if not already captured
+                if (!foundAds.find(ad => ad.iframe === iframe)) {
+                    console.log('Found mspai/nova iframe:', iframe.className);
+                    foundAds.push({ container: iframe.parentElement, iframe, type: 'MSPAI' });
+                }
+            });
+
+            // Pattern 3: Generic iframes that might be ads
+            document.querySelectorAll('iframe').forEach(iframe => {
+                // Skip if already processed
+                if (foundAds.find(ad => ad.iframe === iframe)) return;
+
+                const src = iframe.src || '';
+                const className = iframe.className || '';
+                const id = iframe.id || '';
+
+                // Common ad indicators
+                if (src.includes('ad') || src.includes('sponsor') ||
+                    className.includes('ad') || className.includes('sponsor') ||
+                    id.includes('ad') || id.includes('sponsor')) {
+                    console.log('Found generic ad iframe:', src.substring(0, 50));
+                    foundAds.push({ container: iframe.parentElement, iframe, type: 'Generic' });
+                }
+            });
+
+            // Pattern 4: Divs with sponsored content indicators
+            document.querySelectorAll('[class*="sponsor"], [class*="promoted"], [class*="ad-"], [data-ad], [data-sponsor]').forEach(container => {
+                // Skip if already processed
+                if (!foundAds.find(ad => ad.container === container)) {
+                    console.log('Found sponsored container:', container.className || container.tagName);
+                    foundAds.push({ container, iframe: null, type: 'Sponsored' });
+                }
+            });
+
+            console.log(`Total potential ads found: ${foundAds.length}`);
+
+            const extractedAds = [];
+            foundAds.forEach(({ container, iframe, type }) => {
+                if (!container && !iframe) return;
 
                 const adData = {
                     id: `ad_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                     timestamp: new Date().toISOString(),
-                    containerId: container.id,
+                    containerId: container ? container.id : 'no-container',
+                    adType: type,
                     advertiser: '',
                     headline: '',
                     body: '',
                     image: '',
                     link: '',
-                    iframeSize: `${iframe.width}x${iframe.height}`,
-                    iframeSrc: iframe.src || ''
+                    iframeSize: iframe ? `${iframe.width}x${iframe.height}` : 'N/A',
+                    iframeSrc: iframe ? (iframe.src || '') : ''
                 };
 
                 try {
-                    const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-                    if (iframeDoc && iframeDoc.body) {
+                    // Try to extract from iframe if available
+                    if (iframe) {
+                        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+                        if (iframeDoc && iframeDoc.body) {
                         // Extract from iframe
                         const advertiserEl = iframeDoc.querySelector('.ad-advertiser');
                         const headlineEl = iframeDoc.querySelector('.ad-headline');
@@ -272,17 +414,50 @@ class ForYouAdExtractor {
                                     }
                                 }
                             }
+                            }
+                        }
+                    } else if (container) {
+                        // No iframe, extract directly from container
+                        // Look for common ad text patterns
+                        const textElements = container.querySelectorAll('h1, h2, h3, h4, h5, h6, p, span, div');
+                        textElements.forEach(el => {
+                            const text = el.textContent.trim();
+                            if (text && !adData.headline && el.tagName.match(/^H[1-6]$/)) {
+                                adData.headline = text;
+                            } else if (text && !adData.body && text.length > 20) {
+                                adData.body = text;
+                            }
+                        });
+
+                        // Look for advertiser name
+                        const advertiserEl = container.querySelector('[class*="advertiser"], [class*="sponsor"], [class*="promoted-by"]');
+                        if (advertiserEl) {
+                            adData.advertiser = advertiserEl.textContent.trim();
+                        }
+
+                        // Look for images
+                        const img = container.querySelector('img');
+                        if (img && img.src) {
+                            adData.image = img.src;
+                        }
+
+                        // Look for links
+                        const link = container.querySelector('a[href]');
+                        if (link && link.href) {
+                            adData.link = link.href;
                         }
                     }
                 } catch (e) {
-                    // Cross-origin iframe
-                    adData.advertiser = 'Protected Ad';
-                    adData.headline = 'Cross-origin iframe';
-                    adData.body = `Cannot access content (${adData.iframeSize})`;
+                    // Cross-origin iframe or error
+                    if (iframe) {
+                        adData.advertiser = 'Protected Ad';
+                        adData.headline = 'Cross-origin iframe';
+                        adData.body = `Cannot access content (${adData.iframeSize})`;
 
-                    // For cross-origin, try to extract URL from iframe src
-                    if (iframe.src && iframe.src.includes('http')) {
-                        adData.link = iframe.src;
+                        // For cross-origin, try to extract URL from iframe src
+                        if (iframe.src && iframe.src.includes('http')) {
+                            adData.link = iframe.src;
+                        }
                     }
                 }
 
@@ -309,12 +484,13 @@ class ForYouAdExtractor {
                     }
                 }
 
-                if (adData.advertiser || adData.headline || adData.body) {
-                    foundAds.push(adData);
+                if (adData.advertiser || adData.headline || adData.body || adData.link) {
+                    extractedAds.push(adData);
                 }
             });
 
-            return foundAds;
+            console.log(`Extracted ${extractedAds.length} ads with content`);
+            return extractedAds;
         });
 
         // Filter duplicates
@@ -334,21 +510,24 @@ class ForYouAdExtractor {
         // Ensure sessions directory exists
         await fs.ensureDir(path.join(__dirname, 'data', 'sessions'));
 
-        // Save to main file
-        await fs.writeJson(this.outputFile, this.extractedAds, { spaces: 2 });
-
         // Save session file with timestamp
         await fs.writeJson(this.sessionFile, {
             session: this.sessionTimestamp,
+            timestamp: this.sessionTimestamp,
             startTime: this.sessionTimestamp,
             endTime: new Date().toISOString(),
             totalAds: this.extractedAds.length,
-            ads: this.extractedAds
+            ads: this.extractedAds,
+            sessionId: this.sessionTimestamp
         }, { spaces: 2 });
 
-        // Save latest for dashboard
-        const latestFile = path.join(__dirname, 'data', 'latest_ads.json');
-        await fs.writeJson(latestFile, this.extractedAds.slice(-50), { spaces: 2 });
+        // Update current session pointer
+        await fs.writeJson(this.currentSessionFile, {
+            sessionFile: path.basename(this.sessionFile),
+            timestamp: this.sessionTimestamp,
+            totalAds: this.extractedAds.length,
+            sessionId: this.sessionTimestamp
+        }, { spaces: 2 });
 
         // Update sessions index
         const sessionsIndexFile = path.join(__dirname, 'data', 'sessions', 'index.json');
@@ -356,22 +535,51 @@ class ForYouAdExtractor {
         if (await fs.exists(sessionsIndexFile)) {
             sessionsIndex = await fs.readJson(sessionsIndexFile);
         }
-        sessionsIndex.push({
+
+        // Check if this session already exists in index
+        const existingIndex = sessionsIndex.findIndex(s => s.file === path.basename(this.sessionFile));
+        const sessionInfo = {
             timestamp: this.sessionTimestamp,
-            file: `ads_${this.sessionTimestamp}.json`,
+            file: path.basename(this.sessionFile),
             totalAds: this.extractedAds.length,
-            endTime: new Date().toISOString()
-        });
-        // Keep only last 50 sessions
-        if (sessionsIndex.length > 50) {
-            sessionsIndex = sessionsIndex.slice(-50);
+            endTime: new Date().toISOString(),
+            sessionId: this.sessionTimestamp
+        };
+
+        if (existingIndex >= 0) {
+            sessionsIndex[existingIndex] = sessionInfo;
+        } else {
+            sessionsIndex.unshift(sessionInfo);  // Add to beginning
+        }
+
+        // Keep only last 20 sessions
+        if (sessionsIndex.length > 20) {
+            sessionsIndex = sessionsIndex.slice(0, 20);
         }
         await fs.writeJson(sessionsIndexFile, sessionsIndex, { spaces: 2 });
     }
 
     async close() {
         if (this.browser) {
-            await this.browser.close();
+            // Check if it's a connected browser (AdsPower) or launched browser
+            try {
+                const pages = await this.browser.pages();
+                if (pages.length > 0 && pages[0].url().includes('newsbreak')) {
+                    // It's AdsPower, just disconnect don't close
+                    logger.info('📤 Disconnecting from AdsPower (browser stays open)');
+                    await this.browser.disconnect();
+                } else {
+                    // It's our launched Chrome, close it
+                    await this.browser.close();
+                }
+            } catch (e) {
+                // If error, try to close/disconnect
+                try {
+                    await this.browser.close();
+                } catch (e2) {
+                    await this.browser.disconnect();
+                }
+            }
         }
     }
 }

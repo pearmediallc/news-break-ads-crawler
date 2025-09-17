@@ -37,8 +37,8 @@ class AdsPowerCurrentExtractor {
     async connectToAdsPower() {
         logger.info('🔗 Connecting to AdsPower browser...');
 
-        // Try common AdsPower debug ports
-        const ports = [9222, 9223, 9224, 9225, 9226];
+        // Try common AdsPower debug ports (including dynamic ports)
+        const ports = [63707, 49223, 9222, 9223, 9224, 9225, 9226, 49222, 49224, 49225];
 
         for (const port of ports) {
             try {
@@ -117,9 +117,16 @@ class AdsPowerCurrentExtractor {
         logger.info('🔒 All clicks and navigation disabled');
         logger.info('🎯 Target: ForYou containers with iframes ONLY\n');
 
+        // Initial scroll to trigger content loading
+        logger.info('🎬 Starting auto-scroll...');
+        await this.page.evaluate(() => {
+            window.scrollBy(0, 300);
+        });
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
         // Start extraction loop
         const scanInterval = 5000;      // 5 seconds
-        const scrollInterval = 15000;   // 15 seconds
+        const scrollInterval = 3000;    // 3 seconds - scroll more frequently
         const maxScans = Math.floor(scrollDuration / scanInterval);
         const maxDuration = scrollDuration;
 
@@ -129,6 +136,39 @@ class AdsPowerCurrentExtractor {
 
         while (scanCount < maxScans && (Date.now() - startTime) < maxDuration) {
             logger.info(`\n🔍 Scan #${scanCount + 1}`);
+
+            // Scroll BEFORE extracting (scroll first, then extract)
+            if (Date.now() - lastScrollTime >= scrollInterval) {
+                logger.info('📜 Auto-scrolling...');
+
+                // Smooth scroll with multiple small scrolls
+                for (let i = 0; i < 3; i++) {
+                    await this.page.evaluate(() => {
+                        window.scrollBy({
+                            top: window.innerHeight * 0.3,
+                            behavior: 'smooth'
+                        });
+                    });
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+
+                lastScrollTime = Date.now();
+
+                const isAtBottom = await this.page.evaluate(() => {
+                    return window.innerHeight + window.scrollY >= document.body.scrollHeight - 100;
+                });
+
+                if (isAtBottom) {
+                    logger.info('📄 Reached bottom, scrolling to top...');
+                    await this.page.evaluate(() => {
+                        window.scrollTo({
+                            top: 0,
+                            behavior: 'smooth'
+                        });
+                    });
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            }
 
             const newAds = await this.extractForYouAds();
             if (newAds.length > 0) {
@@ -140,22 +180,6 @@ class AdsPowerCurrentExtractor {
             }
 
             logger.info(`  Total: ${this.extractedAds.length} ads`);
-
-            // Scroll every 15 seconds
-            if (Date.now() - lastScrollTime >= scrollInterval) {
-                logger.info('\n📜 Scrolling (15 seconds passed)...');
-                await this.page.evaluate(() => window.scrollBy(0, window.innerHeight * 0.7));
-                lastScrollTime = Date.now();
-
-                const isAtBottom = await this.page.evaluate(() => {
-                    return window.innerHeight + window.scrollY >= document.body.scrollHeight - 100;
-                });
-
-                if (isAtBottom) {
-                    logger.info('At bottom, going to top...');
-                    await this.page.evaluate(() => window.scrollTo(0, 0));
-                }
-            }
 
             await new Promise(resolve => setTimeout(resolve, scanInterval));
             scanCount++;

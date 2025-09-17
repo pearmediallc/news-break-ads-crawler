@@ -205,6 +205,7 @@
         }
 
         .ad-card {
+            background: white;
             border: 1px solid #e5e7eb;
             border-radius: 12px;
             padding: 15px;
@@ -220,18 +221,22 @@
             font-weight: 600;
             color: #667eea;
             margin-bottom: 8px;
+            font-size: 14px;
         }
 
         .ad-headline {
             font-size: 16px;
             font-weight: 600;
             margin-bottom: 8px;
+            color: #1f2937;
+            line-height: 1.4;
         }
 
         .ad-body {
             color: #666;
             font-size: 14px;
             margin-bottom: 10px;
+            line-height: 1.5;
         }
 
         .ad-link {
@@ -380,10 +385,19 @@
 
         <div class="ads-container">
             <div class="ads-header">
-                <h3>Extracted Ads</h3>
-                <div>
+                <h3>Extracted Ads <span id="currentSessionInfo" style="font-size: 14px; color: #666;"></span></h3>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <button class="btn btn-primary" onclick="createNewSession()">
+                        ➕ New Session
+                    </button>
+                    <select id="sessionSelector" onchange="loadSession(this.value)" style="padding: 8px; border-radius: 8px; border: 1px solid #ddd; min-width: 200px;">
+                        <option value="">Current Session</option>
+                    </select>
                     <button class="btn btn-success" onclick="refreshAds()">
                         🔄 Refresh
+                    </button>
+                    <button class="btn btn-success" onclick="refreshNewAds()" title="Show only ads from last 5 minutes">
+                        ⚡ New Ads Only
                     </button>
                     <button class="btn btn-success" onclick="exportData('json')">
                         💾 Export JSON
@@ -413,6 +427,8 @@
         document.addEventListener('DOMContentLoaded', () => {
             loadStats();
             loadAds();
+            loadSessions();
+            updateSessionInfo();
 
             // Set up form submission
             document.getElementById('extractionForm').addEventListener('submit', startExtraction);
@@ -531,18 +547,81 @@
             badge.className = 'status-badge status-' + status;
         }
 
-        async function loadAds() {
+        async function loadAds(sessionFile = '') {
             document.getElementById('adsLoading').classList.add('active');
 
             try {
-                const response = await fetch('/api/ads');
+                const url = sessionFile ? `/api/ads?session=${sessionFile}` : '/api/ads';
+                const response = await fetch(url);
                 adsData = await response.json();
+                console.log(`Loaded ${adsData.length} ads from ${sessionFile || 'current session'}`);
                 displayAds(adsData);
             } catch (error) {
                 console.error('Failed to load ads:', error);
                 showAlert('error', 'Failed to load ads');
             } finally {
                 document.getElementById('adsLoading').classList.remove('active');
+            }
+        }
+
+        async function loadSessions() {
+            try {
+                const response = await fetch('/api/sessions/list');
+                const sessions = await response.json();
+
+                const selector = document.getElementById('sessionSelector');
+                selector.innerHTML = '<option value="">Current Session</option>';
+
+                // Get current session to mark it
+                const currentResponse = await fetch('/api/sessions/current');
+                let currentSessionFile = null;
+                if (currentResponse.ok) {
+                    const currentSession = await currentResponse.json();
+                    if (currentSession) {
+                        currentSessionFile = currentSession.sessionFile;
+                    }
+                }
+
+                sessions.forEach(session => {
+                    const date = new Date(session.timestamp);
+                    const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+                    const option = document.createElement('option');
+                    option.value = session.file;
+                    const isCurrent = session.file === currentSessionFile ? ' ⭐' : '';
+                    option.textContent = `${dateStr} (${session.totalAds || 0} ads)${isCurrent}`;
+                    selector.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Failed to load sessions:', error);
+            }
+        }
+
+        async function loadSession(sessionFile) {
+            if (sessionFile) {
+                // Switch to selected session
+                try {
+                    const response = await fetch('/api/sessions/switch', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ sessionFile })
+                    });
+
+                    if (response.ok) {
+                        await loadAds(sessionFile);
+                        updateSessionInfo();
+                        showAlert('success', 'Switched to session: ' + sessionFile);
+                    } else {
+                        showAlert('error', 'Failed to switch session');
+                    }
+                } catch (error) {
+                    showAlert('error', 'Failed to switch session: ' + error.message);
+                }
+            } else {
+                // Load current session
+                await loadAds('');
+                updateSessionInfo();
             }
         }
 
@@ -554,10 +633,25 @@
                 return;
             }
 
-            grid.innerHTML = ads.map(ad => `
+            // Filter out invalid ads and only show real ads
+            const validAds = ads.filter(ad =>
+                ad.advertiser && ad.advertiser !== 'Protected Ad' &&
+                (ad.headline || ad.body)
+            );
+
+            if (validAds.length === 0) {
+                grid.innerHTML = '<p>No valid ads to display. Start a new extraction.</p>';
+                return;
+            }
+
+            grid.innerHTML = validAds.map(ad => `
                 <div class="ad-card">
-                    ${ad.advertiser ? `<div class="ad-advertiser">${escapeHtml(ad.advertiser)}</div>` : ''}
-                    ${ad.headline ? `<div class="ad-headline">${escapeHtml(ad.headline)}</div>` : ''}
+                    ${ad.image && !ad.image.includes('undefined') ?
+                        `<img src="${ad.image}" alt="${escapeHtml(ad.headline || 'Ad image')}"
+                         style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; margin-bottom: 10px;"
+                         onerror="this.style.display='none'">` : ''}
+                    <div class="ad-advertiser">${escapeHtml(ad.advertiser || 'Unknown')}</div>
+                    <div class="ad-headline">${escapeHtml(ad.headline || 'No headline')}</div>
                     ${ad.body ? `<div class="ad-body">${escapeHtml(ad.body)}</div>` : ''}
                     ${ad.link ? `<a href="${ad.link}" target="_blank" class="ad-link">🔗 Visit Ad</a>` : ''}
                 </div>
@@ -585,10 +679,80 @@
             }
         }
 
+        async function createNewSession() {
+            try {
+                const response = await fetch('/api/sessions/new', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showAlert('success', 'New session created successfully');
+                    // Reset the session selector to current session
+                    document.getElementById('sessionSelector').value = '';
+                    // Reload everything with the new session
+                    await loadAds();
+                    await loadSessions();
+                    await loadStats();
+                    updateSessionInfo();
+                } else {
+                    showAlert('error', data.error || 'Failed to create new session');
+                }
+            } catch (error) {
+                showAlert('error', 'Failed to create new session: ' + error.message);
+            }
+        }
+
         async function refreshAds() {
-            await loadAds();
+            const sessionSelector = document.getElementById('sessionSelector');
+            const currentSession = sessionSelector.value;
+            await loadAds(currentSession);
             await loadStats();
+            await loadSessions();
+            updateSessionInfo();
             showAlert('success', 'Data refreshed successfully');
+        }
+
+        async function refreshNewAds() {
+            document.getElementById('adsLoading').classList.add('active');
+
+            try {
+                const sessionSelector = document.getElementById('sessionSelector');
+                const sessionFile = sessionSelector.value;
+                const url = sessionFile ? `/api/ads?session=${sessionFile}&refresh=true` : '/api/ads?refresh=true';
+                const response = await fetch(url);
+                adsData = await response.json();
+                console.log(`Loaded ${adsData.length} new ads from last 5 minutes`);
+                displayAds(adsData);
+                showAlert('info', `Showing ${adsData.length} ads from last 5 minutes`);
+            } catch (error) {
+                console.error('Failed to load new ads:', error);
+                showAlert('error', 'Failed to load new ads');
+            } finally {
+                document.getElementById('adsLoading').classList.remove('active');
+            }
+        }
+
+        async function updateSessionInfo() {
+            try {
+                const response = await fetch('/api/sessions/current');
+                if (response.ok) {
+                    const session = await response.json();
+                    if (session) {
+                        const date = new Date(session.timestamp);
+                        const timeStr = date.toLocaleTimeString();
+                        document.getElementById('currentSessionInfo').textContent = `(Session: ${timeStr})`;
+                    } else {
+                        document.getElementById('currentSessionInfo').textContent = '';
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to update session info:', error);
+            }
         }
 
         async function exportData(format) {
@@ -646,7 +810,8 @@
         // Auto-refresh ads every 30 seconds
         setInterval(() => {
             if (!currentExtractionId || document.getElementById('statusBadge').textContent !== 'running') {
-                loadAds();
+                const sessionSelector = document.getElementById('sessionSelector');
+                loadAds(sessionSelector.value);
                 loadStats();
             }
         }, 30000);
