@@ -1,15 +1,24 @@
 // ForYou Iframe Ad Extractor - ONLY extracts ads from ForYou containers on main page
 // NO CLICKING, NO NAVIGATION, NO ARTICLE EXTRACTION
 
-// Try to use puppeteer-core if puppeteer is not available
+// Always use puppeteer in production (Docker), it has bundled Chrome
+// Only fall back to puppeteer-core for local development without puppeteer
 let puppeteer;
 let isPuppeteerCore = false;
-try {
+const isProduction = process.env.NODE_ENV === 'production';
+
+// In production/Docker, always use puppeteer which includes Chrome
+if (isProduction) {
     puppeteer = require('puppeteer');
-} catch (e) {
-    console.log('Using puppeteer-core instead of puppeteer');
-    puppeteer = require('puppeteer-core');
-    isPuppeteerCore = true;
+} else {
+    // For local development, try puppeteer first, then puppeteer-core
+    try {
+        puppeteer = require('puppeteer');
+    } catch (e) {
+        console.log('Using puppeteer-core instead of puppeteer');
+        puppeteer = require('puppeteer-core');
+        isPuppeteerCore = true;
+    }
 }
 const fs = require('fs-extra');
 const path = require('path');
@@ -40,7 +49,6 @@ class ForYouAdExtractor {
 
         // Check if running from spawn/server or directly
         const isSpawned = process.send !== undefined;
-        const isProduction = process.env.NODE_ENV === 'production';
 
         const launchOptions = {
             // Headless in production or when spawned from server
@@ -55,54 +63,58 @@ class ForYouAdExtractor {
             ]
         };
 
-        // In Docker/production, use the Chrome installed by puppeteer image
-        if (isProduction) {
-            // Try different possible Chrome/Chromium paths
-            const possiblePaths = [
-                process.env.PUPPETEER_EXECUTABLE_PATH,
-                process.env.CHROME_PATH,
-                '/usr/bin/chromium',
-                '/usr/bin/chromium-browser',
-                '/usr/bin/google-chrome',
-                '/usr/bin/google-chrome-stable'
-            ].filter(Boolean);
+        // In Docker/production with puppeteer (not puppeteer-core), don't set executablePath
+        // Puppeteer will use its bundled Chrome automatically
+        if (isProduction && !isPuppeteerCore) {
+            logger.info('Using Puppeteer with bundled Chrome (production mode)');
+            // Don't set executablePath - puppeteer will use its bundled Chrome
+        }
+        // Only set executablePath when using puppeteer-core (requires external Chrome)
+        else if (isPuppeteerCore) {
+            if (isProduction) {
+                // In production with puppeteer-core, try to find Chrome/Chromium
+                const possiblePaths = [
+                    process.env.PUPPETEER_EXECUTABLE_PATH,
+                    process.env.CHROME_PATH,
+                    '/usr/bin/chromium',
+                    '/usr/bin/chromium-browser',
+                    '/usr/bin/google-chrome',
+                    '/usr/bin/google-chrome-stable'
+                ].filter(Boolean);
 
-            let foundPath = null;
-            for (const chromePath of possiblePaths) {
-                try {
-                    if (require('fs').existsSync(chromePath)) {
-                        foundPath = chromePath;
-                        logger.info(`Found Chrome/Chromium at: ${chromePath}`);
+                for (const chromePath of possiblePaths) {
+                    try {
+                        if (require('fs').existsSync(chromePath)) {
+                            launchOptions.executablePath = chromePath;
+                            logger.info(`Found Chrome/Chromium at: ${chromePath}`);
+                            break;
+                        }
+                    } catch (e) {
+                        logger.info(`Path not accessible: ${chromePath}`);
+                    }
+                }
+
+                if (!launchOptions.executablePath) {
+                    throw new Error('puppeteer-core requires executablePath but no Chrome/Chromium found');
+                }
+            } else {
+                // Local development with puppeteer-core
+                const chromePaths = [
+                    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+                    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+                    process.env.CHROME_PATH
+                ].filter(Boolean);
+
+                for (const path of chromePaths) {
+                    if (require('fs').existsSync(path)) {
+                        launchOptions.executablePath = path;
+                        logger.info(`Using Chrome at: ${path}`);
                         break;
                     }
-                } catch (e) {
-                    logger.info(`Path not accessible: ${chromePath}`);
                 }
-            }
 
-            if (foundPath) {
-                launchOptions.executablePath = foundPath;
-                logger.info(`Using Chrome from Docker image: ${foundPath}`);
-            } else {
-                // If no path found, let Puppeteer use its bundled Chrome
-                logger.info('No Chrome/Chromium found in expected paths, using Puppeteer bundled Chrome');
-                // Don't set executablePath - let puppeteer handle it
-            }
-        }
-        // If using puppeteer-core on Windows/local dev, specify Chrome path
-        else if (isPuppeteerCore) {
-            // Try common Chrome locations for Windows development
-            const chromePaths = [
-                'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-                'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-                process.env.CHROME_PATH
-            ].filter(Boolean);
-
-            for (const path of chromePaths) {
-                if (require('fs').existsSync(path)) {
-                    launchOptions.executablePath = path;
-                    logger.info(`Using Chrome at: ${path}`);
-                    break;
+                if (!launchOptions.executablePath) {
+                    throw new Error('puppeteer-core requires Chrome to be installed. Please install Chrome or set CHROME_PATH environment variable');
                 }
             }
         }

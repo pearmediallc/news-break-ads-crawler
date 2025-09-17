@@ -12,8 +12,4 @@ services:
         value: 10000
       - key: ENABLE_FILE_LOGGING
         value: false
-      - key: PUPPETEER_EXECUTABLE_PATH
-        value: /usr/bin/chromium
-      - key: CHROME_PATH
-        value: /usr/bin/chromium
     autoDeploy: false

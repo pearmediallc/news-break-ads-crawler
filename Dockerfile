@@ -3,9 +3,10 @@ FROM ghcr.io/puppeteer/puppeteer:24.10.2
 # Switch to root user for installation
 USER root
 
-# The puppeteer image has Chrome at this location
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-ENV CHROME_PATH=/usr/bin/chromium
+# Don't set PUPPETEER_EXECUTABLE_PATH as puppeteer will use its bundled Chrome
+# These env vars are only needed if using puppeteer-core
+# ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+# ENV CHROME_PATH=/usr/bin/chromium
 
 # Set working directory
 WORKDIR /usr/src/app
