@@ -1,4 +1,4 @@
-FROM ghcr.io/puppeteer/puppeteer:23.11.0
+FROM ghcr.io/puppeteer/puppeteer:24.10.2
 
 # Switch to root user for installation
 USER root
