@@ -35,84 +35,56 @@ class ForYouAdExtractor {
         logger.info('Starting new extraction session: ' + this.sessionTimestamp);
         logger.info('Session file: ' + path.basename(this.sessionFile));
 
-        // First try to connect to AdsPower browser (for USA IP)
-        logger.info('🔗 Attempting to connect to AdsPower browser for USA IP...');
+        // Launch Chrome directly - no need for AdsPower on US server
+        logger.info('🚀 Launching Chrome browser...');
 
-        // Try common AdsPower debug ports (including dynamic ports)
-        const ports = [63707, 49223, 9222, 9223, 9224, 9225, 9226, 49222, 49224, 49225];
-        let connected = false;
+        // Check if running from spawn/server or directly
+        const isSpawned = process.send !== undefined;
+        const isProduction = process.env.NODE_ENV === 'production';
 
-        for (const port of ports) {
-            try {
-                logger.info(`  Trying port ${port}...`);
-                this.browser = await puppeteer.connect({
-                    browserURL: `http://localhost:${port}`,
-                    defaultViewport: null
-                });
-                logger.info(`✅ Connected to AdsPower on port ${port} - Using USA IP!`);
-                connected = true;
-                break;
-            } catch (e) {
-                // Continue trying other ports
-            }
-        }
+        const launchOptions = {
+            // Headless in production or when spawned from server
+            headless: isProduction || isSpawned ? 'new' : false,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-gpu',
+                '--disable-dev-shm-usage',
+                '--disable-web-security',
+                '--disable-features=IsolateOrigins,site-per-process'
+            ]
+        };
 
-        // If AdsPower not available, fall back to local Chrome
-        if (!connected) {
-            logger.info('⚠️ AdsPower not found, falling back to local Chrome (no USA IP)');
+        // If using puppeteer-core on Windows/local dev, specify Chrome path
+        if (isPuppeteerCore && !isProduction) {
+            // Try common Chrome locations for Windows development
+            const chromePaths = [
+                'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+                'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+                process.env.CHROME_PATH
+            ].filter(Boolean);
 
-            // Check if running from spawn/server or directly
-            const isSpawned = process.send !== undefined;
-
-            const launchOptions = {
-                headless: isSpawned ? 'new' : false,  // Headless when spawned, visible when run directly
-                args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-gpu',
-                    '--disable-dev-shm-usage'
-                ]
-            };
-
-            // If using puppeteer-core, need to specify Chrome path
-            if (isPuppeteerCore) {
-                // Try common Chrome locations
-                const chromePaths = [
-                    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-                    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-                    process.env.CHROME_PATH
-                ].filter(Boolean);
-
-                for (const path of chromePaths) {
-                    if (require('fs').existsSync(path)) {
-                        launchOptions.executablePath = path;
-                        logger.info(`Using Chrome at: ${path}`);
-                        break;
-                    }
+            for (const path of chromePaths) {
+                if (require('fs').existsSync(path)) {
+                    launchOptions.executablePath = path;
+                    logger.info(`Using Chrome at: ${path}`);
+                    break;
                 }
             }
-
-            this.browser = await puppeteer.launch(launchOptions);
         }
 
-        // Get or create page
-        if (connected) {
-            // For AdsPower, use existing page or first available
-            const pages = await this.browser.pages();
-            if (pages.length > 0) {
-                this.page = pages[0];
-                logger.info('📄 Using existing AdsPower tab');
-            } else {
-                this.page = await this.browser.newPage();
-                logger.info('📄 Created new tab in AdsPower');
-            }
-        } else {
-            // For local Chrome, create new page
-            this.page = await this.browser.newPage();
-            await this.page.setViewport({ width: 1920, height: 1080 });
-        }
+        this.browser = await puppeteer.launch(launchOptions);
+        logger.info('✅ Chrome browser launched successfully');
 
-        logger.info('Browser ready - extraction will use USA IP if AdsPower is connected');
+        // Create new page
+        this.page = await this.browser.newPage();
+        await this.page.setViewport({ width: 1920, height: 1080 });
+        logger.info('📄 New browser page created');
+
+        // Set user agent to appear as regular Chrome
+        await this.page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+
+        logger.info('Browser ready - Using server location (USA Virginia)');
     }
 
     async extract(url = 'https://www.newsbreak.com/new-york-ny', scrollDuration = 300000) {
@@ -561,24 +533,11 @@ class ForYouAdExtractor {
 
     async close() {
         if (this.browser) {
-            // Check if it's a connected browser (AdsPower) or launched browser
             try {
-                const pages = await this.browser.pages();
-                if (pages.length > 0 && pages[0].url().includes('newsbreak')) {
-                    // It's AdsPower, just disconnect don't close
-                    logger.info('📤 Disconnecting from AdsPower (browser stays open)');
-                    await this.browser.disconnect();
-                } else {
-                    // It's our launched Chrome, close it
-                    await this.browser.close();
-                }
+                await this.browser.close();
+                logger.info('🔚 Browser closed successfully');
             } catch (e) {
-                // If error, try to close/disconnect
-                try {
-                    await this.browser.close();
-                } catch (e2) {
-                    await this.browser.disconnect();
-                }
+                logger.error('Error closing browser:', e.message);
             }
         }
     }
