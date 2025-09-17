@@ -45,11 +45,14 @@ class ForYouAdExtractor {
         await fs.ensureDir(path.join(__dirname, 'data'));
         await fs.ensureDir(path.join(__dirname, 'data', 'sessions'));
 
-        // Load previous session if requested
-        if (this.continueSession) {
+        // Only load previous session if we haven't already loaded a specific session
+        // (switchToSession may have already been called)
+        if (this.continueSession && this.extractedAds.length === 0) {
             await this.loadPreviousSession();
-        } else {
+        } else if (this.extractedAds.length === 0) {
             logger.info('Starting new extraction session: ' + this.sessionTimestamp);
+        } else {
+            logger.info(`Continuing with ${this.extractedAds.length} loaded ads from session: ${path.basename(this.sessionFile)}`);
         }
         logger.info('Session file: ' + path.basename(this.sessionFile));
 
@@ -809,15 +812,23 @@ async function main() {
             return;
         }
 
-        await extractor.init();
-
-        // Switch to specific session if requested
+        // Switch to specific session BEFORE init if requested
+        // This ensures we load the session data before browser initialization
         if (switchSession) {
+            // Ensure directories exist first
+            await fs.ensureDir(path.join(__dirname, 'data'));
+            await fs.ensureDir(path.join(__dirname, 'data', 'sessions'));
+
             const success = await extractor.switchToSession(switchSession);
             if (!success) {
                 logger.error('Failed to switch session. Starting new session instead.');
+            } else {
+                // Override continueSession since we're switching to a specific session
+                continueSession = true;
             }
         }
+
+        await extractor.init();
 
         const scrollDuration = scrollMinutes * 60 * 1000;
 
