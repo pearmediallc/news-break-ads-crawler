@@ -3,10 +3,9 @@ FROM ghcr.io/puppeteer/puppeteer:24.10.2
 # Switch to root user for installation
 USER root
 
-# The puppeteer Docker image includes Chromium at this location
-# We need to tell puppeteer to use it instead of downloading its own
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+# The puppeteer Docker image installs Chrome in its cache directory
+# Set the cache directory to match the image's setup
+ENV PUPPETEER_CACHE_DIR=/home/pptruser/.cache/puppeteer
 
 # Set working directory
 WORKDIR /usr/src/app
@@ -14,8 +13,11 @@ WORKDIR /usr/src/app
 # Copy package files and set proper ownership
 COPY --chown=pptruser:pptruser package*.json ./
 
-# Install dependencies
+# Install dependencies (puppeteer will download Chrome if needed)
 RUN npm install --omit=dev --no-package-lock
+
+# Ensure Chrome is installed (the base image should have it, but just in case)
+RUN npx puppeteer browsers install chrome || true
 
 # Copy application files with proper ownership
 COPY --chown=pptruser:pptruser . .
