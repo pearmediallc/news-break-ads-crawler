@@ -272,14 +272,46 @@ class ForYouAdExtractor {
                 });
 
                 if (isAtBottom) {
-                    logger.info('📄 Reached bottom, scrolling to top...');
+                    logger.info('🔄 Reached bottom, refreshing page for new content...');
+
+                    // Refresh the page to get new content
+                    try {
+                        await this.page.reload({ waitUntil: 'networkidle2', timeout: 30000 });
+                        logger.info('✅ Page refreshed successfully');
+                    } catch (reloadError) {
+                        logger.info('Page reload timeout, continuing anyway...');
+                    }
+
+                    // Wait for content to load
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+
+                    // Re-disable clicks after refresh
                     await this.page.evaluate(() => {
-                        window.scrollTo({
-                            top: 0,
-                            behavior: 'smooth'
+                        // Remove all click handlers
+                        document.querySelectorAll('*').forEach(element => {
+                            element.onclick = null;
+                            element.onmousedown = null;
+                            element.onmouseup = null;
+                        });
+
+                        // Disable all links
+                        document.querySelectorAll('a').forEach(link => {
+                            link.removeAttribute('href');
+                            link.removeAttribute('target');
+                            link.style.pointerEvents = 'none';
+                            link.onclick = (e) => {
+                                e.preventDefault();
+                                return false;
+                            };
+                        });
+
+                        // Disable iframes from navigation
+                        document.querySelectorAll('iframe').forEach(iframe => {
+                            iframe.style.pointerEvents = 'none';
                         });
                     });
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+
+                    logger.info('🔒 Clicks disabled after refresh');
                 }
             }
 
