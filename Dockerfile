@@ -12,14 +12,15 @@ COPY --chown=pptruser:pptruser package*.json ./
 # Install dependencies
 RUN npm install --omit=dev --no-package-lock
 
-# Switch back to pptruser
-USER pptruser
-
 # Copy application files with proper ownership
 COPY --chown=pptruser:pptruser . .
 
-# Create data directories
-RUN mkdir -p data/sessions
+# Create data directories with proper ownership
+RUN mkdir -p data/sessions data/exports ui/data && \
+    chown -R pptruser:pptruser data ui/data
+
+# Switch back to pptruser
+USER pptruser
 
 # Set environment variables
 ENV NODE_ENV=production
