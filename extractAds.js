@@ -253,7 +253,9 @@ class ForYouAdExtractor {
         await new Promise(resolve => setTimeout(resolve, 500));  // Reduced wait
 
         while (scanCount < maxScans && (Date.now() - startTime < maxDuration)) {
-            logger.info(`\n🔍 Scan #${scanCount + 1}`);
+            const timeRemaining = Math.max(0, maxDuration - (Date.now() - startTime));
+            const scansRemaining = maxScans - scanCount;
+            logger.info(`\n🔍 Scan #${scanCount + 1} (${scansRemaining} scans left, ${Math.floor(timeRemaining/1000)}s remaining)`);
 
             // Scroll BEFORE extracting (scroll first, then extract)
             if (Date.now() - lastScrollTime >= scrollInterval) {
@@ -282,58 +284,80 @@ class ForYouAdExtractor {
                         await this.page.reload({ waitUntil: 'networkidle2', timeout: 30000 });
                         logger.info('✅ Page refreshed successfully');
                     } catch (reloadError) {
-                        logger.info('Page reload timeout, continuing anyway...');
+                        logger.error('Page reload failed:', reloadError.message);
+                        logger.info('Trying to continue without refresh...');
+
+                        // If reload fails, try to scroll to top instead
+                        try {
+                            await this.page.evaluate(() => {
+                                window.scrollTo({ top: 0, behavior: 'auto' });
+                            });
+                            logger.info('📄 Scrolled to top instead of refresh');
+                        } catch (scrollError) {
+                            logger.error('Scroll to top also failed:', scrollError.message);
+                            logger.info('Continuing extraction anyway...');
+                        }
                     }
 
                     // Wait for content to load
                     await new Promise(resolve => setTimeout(resolve, 3000));
 
                     // Re-disable clicks after refresh
-                    await this.page.evaluate(() => {
-                        // Remove all click handlers
-                        document.querySelectorAll('*').forEach(element => {
-                            element.onclick = null;
-                            element.onmousedown = null;
-                            element.onmouseup = null;
+                    try {
+                        await this.page.evaluate(() => {
+                            // Remove all click handlers
+                            document.querySelectorAll('*').forEach(element => {
+                                element.onclick = null;
+                                element.onmousedown = null;
+                                element.onmouseup = null;
+                            });
+
+                            // Disable all links
+                            document.querySelectorAll('a').forEach(link => {
+                                link.removeAttribute('href');
+                                link.removeAttribute('target');
+                                link.style.pointerEvents = 'none';
+                                link.onclick = (e) => {
+                                    e.preventDefault();
+                                    return false;
+                                };
+                            });
+
+                            // Disable iframes from navigation
+                            document.querySelectorAll('iframe').forEach(iframe => {
+                                iframe.style.pointerEvents = 'none';
+                            });
                         });
 
-                        // Disable all links
-                        document.querySelectorAll('a').forEach(link => {
-                            link.removeAttribute('href');
-                            link.removeAttribute('target');
-                            link.style.pointerEvents = 'none';
-                            link.onclick = (e) => {
-                                e.preventDefault();
-                                return false;
-                            };
-                        });
-
-                        // Disable iframes from navigation
-                        document.querySelectorAll('iframe').forEach(iframe => {
-                            iframe.style.pointerEvents = 'none';
-                        });
-                    });
-
-                    logger.info('🔒 Clicks disabled after refresh');
+                        logger.info('🔒 Clicks disabled after refresh');
+                    } catch (disableError) {
+                        logger.error('Failed to disable clicks:', disableError.message);
+                        logger.info('Continuing anyway...');
+                    }
                 }
             }
 
             // Extract ONLY from ForYou containers
-            const newAds = await this.extractForYouAds();
+            try {
+                const newAds = await this.extractForYouAds();
 
-            if (newAds.length > 0) {
-                logger.info(`✨ Found ${newAds.length} new ads`);
-                this.extractedAds.push(...newAds);
-                await this.saveAds();
+                if (newAds.length > 0) {
+                    logger.info(`✨ Found ${newAds.length} new ads`);
+                    this.extractedAds.push(...newAds);
+                    await this.saveAds();
 
-                newAds.forEach(ad => {
-                    logger.info(`  📦 ${ad.advertiser || 'Ad'}: ${ad.headline || 'No headline'}`);
-                });
-            } else {
-                logger.info(`  No new ads found`);
+                    newAds.forEach(ad => {
+                        logger.info(`  📦 ${ad.advertiser || 'Ad'}: ${ad.headline || 'No headline'}`);
+                    });
+                } else {
+                    logger.info(`  No new ads found`);
+                }
+
+                logger.info(`  Total: ${this.extractedAds.length} ads`);
+            } catch (extractError) {
+                logger.error('Error extracting ads:', extractError.message);
+                logger.info('Continuing to next scan...');
             }
-
-            logger.info(`  Total: ${this.extractedAds.length} ads`);
 
             await new Promise(resolve => setTimeout(resolve, scanInterval));
             scanCount++;
