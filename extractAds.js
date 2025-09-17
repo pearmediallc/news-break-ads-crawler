@@ -236,14 +236,18 @@ class ForYouAdExtractor {
         logger.info('🔒 All clicks and navigation disabled');
         await new Promise(resolve => setTimeout(resolve, 1000));  // Reduced wait
 
-        const scanInterval = 2000;      // 2 seconds - scan more frequently
-        const scrollInterval = 1500;    // 1.5 seconds - scroll more frequently
+        const scanInterval = 3000;      // 3 seconds - slower scans for more content loading
+        const scrollInterval = 2500;    // 2.5 seconds - slower scrolling
         const maxScans = Math.floor(scrollDuration / scanInterval);
         const maxDuration = scrollDuration;  // User-defined duration
+
+        logger.info(`🔍 Calculated: ${maxScans} scans over ${Math.floor(maxDuration/1000)}s (scan every ${scanInterval/1000}s)`);
 
         const startTime = Date.now();
         let lastScrollTime = Date.now();
         let scanCount = 0;
+        let refreshCount = 0;
+        const maxRefreshes = 3;  // Limit refreshes to prevent getting stuck
 
         // Initial scroll to trigger content loading
         logger.info('🎬 Starting auto-scroll...');
@@ -261,23 +265,48 @@ class ForYouAdExtractor {
             if (Date.now() - lastScrollTime >= scrollInterval) {
                 logger.info('📜 Auto-scrolling...');
 
-                // Faster scroll with larger jumps
+                // Slower, smaller scroll increments for better content loading
                 await this.page.evaluate(() => {
                     window.scrollBy({
-                        top: window.innerHeight * 0.8,
-                        behavior: 'auto'  // Instant scroll instead of smooth
+                        top: window.innerHeight * 0.4,  // Smaller scroll increment
+                        behavior: 'smooth'  // Smooth scroll for better content loading
                     });
                 });
-                await new Promise(resolve => setTimeout(resolve, 200));  // Reduced wait
+                await new Promise(resolve => setTimeout(resolve, 800));  // Wait longer for content to load
 
                 lastScrollTime = Date.now();
 
                 const isAtBottom = await this.page.evaluate(() => {
-                    return window.innerHeight + window.scrollY >= document.body.scrollHeight - 100;
+                    return window.innerHeight + window.scrollY >= document.body.scrollHeight - 50;
                 });
 
                 if (isAtBottom) {
-                    logger.info('🔄 Reached bottom, refreshing page for new content...');
+                    // Wait longer before deciding to refresh - give content time to load
+                    logger.info('📄 Near bottom, waiting for more content...');
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+
+                    // Check again if we're still at bottom after waiting
+                    const stillAtBottom = await this.page.evaluate(() => {
+                        return window.innerHeight + window.scrollY >= document.body.scrollHeight - 50;
+                    });
+
+                    if (!stillAtBottom) {
+                        logger.info('✨ New content loaded, continuing scroll...');
+                        continue; // Skip refresh, continue scrolling
+                    }
+
+                    // Check refresh limit
+                    if (refreshCount >= maxRefreshes) {
+                        logger.info('🚫 Maximum refreshes reached, scrolling to top instead...');
+                        await this.page.evaluate(() => {
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                        });
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        continue;
+                    }
+
+                    logger.info(`🔄 Reached bottom, refreshing page for new content... (${refreshCount + 1}/${maxRefreshes})`);
+                    refreshCount++;
 
                     // Refresh the page to get new content
                     try {
@@ -393,6 +422,16 @@ class ForYouAdExtractor {
                     logger.info(`✅ Continuing previous session: ${currentSession.sessionFile}`);
                     logger.info(`📊 Loaded ${this.extractedAds.length} existing ads`);
                     logger.info(`🔄 Will continue adding to the same session file`);
+
+                    // Display existing ads from the session
+                    if (this.extractedAds.length > 0) {
+                        logger.info(`\n📜 Existing ads in this session:`);
+                        this.extractedAds.forEach((ad, index) => {
+                            logger.info(`  ${index + 1}. 📦 ${ad.advertiser || 'Unknown'}: ${ad.headline || 'No headline'}`);
+                            if (ad.body) logger.info(`     "${ad.body.substring(0, 60)}${ad.body.length > 60 ? '...' : ''}"`);
+                        });
+                        logger.info('');
+                    }
                 } else {
                     logger.info('Previous session file not found, starting fresh');
                 }
@@ -436,6 +475,14 @@ class ForYouAdExtractor {
 
                 logger.info(`✅ Switched to session: ${sessionFileName}`);
                 logger.info(`📊 Loaded ${this.extractedAds.length} ads from this session`);
+
+                // Display existing ads from the session
+                logger.info(`\n📜 Existing ads in this session:`);
+                this.extractedAds.forEach((ad, index) => {
+                    logger.info(`  ${index + 1}. 📦 ${ad.advertiser || 'Unknown'}: ${ad.headline || 'No headline'}`);
+                    if (ad.body) logger.info(`     "${ad.body.substring(0, 60)}${ad.body.length > 60 ? '...' : ''}"`);
+                });
+                logger.info('');
 
                 return true;
             } else {
@@ -821,8 +868,8 @@ async function main() {
             listSessions = true;
         } else if (arg.startsWith('http')) {
             url = arg;
-        } else if (!isNaN(parseInt(arg))) {
-            scrollMinutes = parseInt(arg);
+        } else if (!isNaN(parseFloat(arg))) {
+            scrollMinutes = parseFloat(arg);
         }
     }
 
@@ -854,10 +901,12 @@ async function main() {
 
         await extractor.init();
 
-        const scrollDuration = scrollMinutes * 60 * 1000;
+        // Ensure minimum duration of 30 seconds
+        const scrollDuration = Math.max(scrollMinutes * 60 * 1000, 30000);
+        const actualMinutes = scrollDuration / 60000;
 
         logger.info(`\n📍 URL: ${url}`);
-        logger.info(`⏱️ Scroll duration: ${scrollMinutes} minutes`);
+        logger.info(`⏱️ Scroll duration: ${actualMinutes} minutes (${scrollDuration}ms)`);
         logger.info(`💾 Session mode: ${continueSession ? 'Continuing previous' : (switchSession ? `Switched to ${switchSession}` : 'New session')}`);
 
         await extractor.extract(url, scrollDuration);
