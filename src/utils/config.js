@@ -37,8 +37,9 @@ const config = {
     bypass: process.env.PROXY_BYPASS || null // e.g., 'localhost,127.0.0.1'
   },
 
+  // AdsPower is disabled - using regular Chrome browser on US server
   adspower: {
-    enabled: process.env.ADSPOWER_ENABLED === 'true',
+    enabled: false, // Disabled - using regular Chrome on US server
     apiUrl: process.env.ADSPOWER_API_URL || 'http://local.adspower.net:50325',
     preferredProfile: process.env.ADSPOWER_PROFILE_ID || null, // Specific profile ID
     groupId: process.env.ADSPOWER_GROUP_ID || null, // Group to filter profiles

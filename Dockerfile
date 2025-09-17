@@ -3,10 +3,10 @@ FROM ghcr.io/puppeteer/puppeteer:24.10.2
 # Switch to root user for installation
 USER root
 
-# Don't set PUPPETEER_EXECUTABLE_PATH as puppeteer will use its bundled Chrome
-# These env vars are only needed if using puppeteer-core
-# ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-# ENV CHROME_PATH=/usr/bin/chromium
+# The puppeteer Docker image includes Chromium at this location
+# We need to tell puppeteer to use it instead of downloading its own
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Set working directory
 WORKDIR /usr/src/app

@@ -35,7 +35,6 @@ http://localhost:3000
 news-break-ads-crawler/
 ├── app.js                 # Express server
 ├── extractAds.js          # Main extractor logic
-├── adsPowerCurrent.js     # AdsPower browser support
 ├── package.json           # Dependencies
 ├── Dockerfile             # Docker configuration
 ├── render.yaml            # Render deployment config
@@ -90,14 +89,14 @@ docker run -p 3000:3000 newsbreak-crawler
 PORT=3000
 NODE_ENV=production
 PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 DEFAULT_EXTRACTION_DURATION=5
 DEFAULT_NEWSBREAK_URL=https://www.newsbreak.com/new-york-ny
 ```
 
 ## 🔧 Technical Details
 
-- **Browser Automation**: Puppeteer with Chrome
+- **Browser Automation**: Puppeteer with Chrome (US-based server)
 - **No-Click Policy**: Event listeners block all navigation
 - **Iframe Extraction**: Cross-origin content access
 - **Session Storage**: Timestamped JSON files
