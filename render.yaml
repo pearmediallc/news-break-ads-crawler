@@ -3,7 +3,7 @@ services:
     name: news-break-ads-crawler
     runtime: node
     env: production
-    buildCommand: npm ci --omit=dev
+    buildCommand: npm install --omit=dev
     startCommand: node app.js
     healthCheckPath: /health
     envVars:
