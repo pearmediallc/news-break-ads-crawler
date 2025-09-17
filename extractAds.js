@@ -246,7 +246,7 @@ class ForYouAdExtractor {
         let lastScrollTime = Date.now();
         let scanCount = 0;
         let refreshCount = 0;
-        const maxRefreshes = 3;  // Limit refreshes to prevent getting stuck
+        // No refresh limit - unlimited refreshes allowed
 
         // Initial scroll to trigger content loading
         logger.info('🎬 Starting auto-scroll...');
@@ -295,18 +295,8 @@ class ForYouAdExtractor {
                         continue; // Skip refresh, continue scrolling
                     }
 
-                    // Check refresh limit
-                    if (refreshCount >= maxRefreshes) {
-                        logger.info('🚫 Maximum refreshes reached, scrolling to top instead...');
-                        await this.page.evaluate(() => {
-                            window.scrollTo({ top: 0, behavior: 'smooth' });
-                        });
-                        await new Promise(resolve => setTimeout(resolve, 2000));
-                        continue;
-                    }
-
-                    logger.info(`🔄 Reached bottom, refreshing page for new content... (${refreshCount + 1}/${maxRefreshes})`);
                     refreshCount++;
+                    logger.info(`🔄 Reached bottom, refreshing page for new content... (refresh #${refreshCount})`);
 
                     // Refresh the page to get new content
                     try {
