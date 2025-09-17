@@ -15,9 +15,9 @@ RUN npm install --omit=dev --no-package-lock
 # Copy application files with proper ownership
 COPY --chown=pptruser:pptruser . .
 
-# Create data directories with proper ownership
-RUN mkdir -p data/sessions data/exports ui/data && \
-    chown -R pptruser:pptruser data ui/data
+# Create data and logs directories with proper ownership
+RUN mkdir -p data/sessions data/exports ui/data logs && \
+    chown -R pptruser:pptruser data ui/data logs
 
 # Switch back to pptruser
 USER pptruser
