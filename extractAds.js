@@ -173,7 +173,7 @@ class ForYouAdExtractor {
 
         // Wait for ForYou containers to load
         logger.info('⏳ Waiting for ForYou containers to load...');
-        await this.page.waitForTimeout(5000);
+        await new Promise(resolve => setTimeout(resolve, 5000));
 
         // Check what's on the page
         const pageInfo = await this.page.evaluate(() => {
