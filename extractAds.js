@@ -55,8 +55,13 @@ class ForYouAdExtractor {
             ]
         };
 
+        // In Docker/production, use the Chrome installed by puppeteer image
+        if (isProduction) {
+            launchOptions.executablePath = '/usr/bin/google-chrome-stable';
+            logger.info('Using Chrome from Docker image: /usr/bin/google-chrome-stable');
+        }
         // If using puppeteer-core on Windows/local dev, specify Chrome path
-        if (isPuppeteerCore && !isProduction) {
+        else if (isPuppeteerCore) {
             // Try common Chrome locations for Windows development
             const chromePaths = [
                 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',

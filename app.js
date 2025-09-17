@@ -24,7 +24,7 @@ app.get('/', (req, res) => {
 
 // API endpoint to start extraction
 app.post('/api/extract/start', async (req, res) => {
-    const { url, duration, useAdsPower } = req.body;
+    const { url, duration } = req.body;
 
     // Validate input
     if (!url || !url.includes('newsbreak.com')) {
@@ -37,15 +37,12 @@ app.post('/api/extract/start', async (req, res) => {
     const durationMinutes = parseInt(duration) || 5;
 
     try {
-        // Determine which extractor to use
-        const scriptPath = useAdsPower ? 'adsPowerExtractor.js' : 'extractAds.js';
-
-        console.log(`Starting extraction with script: ${scriptPath}`);
+        console.log(`Starting extraction...`);
         console.log(`URL: ${url}, Duration: ${durationMinutes} minutes`);
 
         // Start extraction process
         const extractorProcess = spawn('node', [
-            scriptPath,
+            'extractAds.js',
             url,
             durationMinutes.toString()
         ], {

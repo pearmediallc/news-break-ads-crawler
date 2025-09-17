@@ -336,13 +336,6 @@
                         required
                     >
                 </div>
-                <div class="form-group">
-                    <label for="browser">Browser</label>
-                    <select id="browser">
-                        <option value="chrome">Chrome</option>
-                        <option value="adspower">AdsPower</option>
-                    </select>
-                </div>
                 <button type="submit" class="btn btn-primary" id="startBtn">
                     🚀 Start Extraction
                 </button>
@@ -439,7 +432,6 @@
 
             const url = document.getElementById('url').value;
             const duration = document.getElementById('duration').value;
-            const useAdsPower = document.getElementById('browser').value === 'adspower';
 
             // Disable start button
             document.getElementById('startBtn').disabled = true;
@@ -450,7 +442,7 @@
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ url, duration, useAdsPower })
+                    body: JSON.stringify({ url, duration })
                 });
 
                 const data = await response.json();
