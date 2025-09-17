@@ -9,6 +9,10 @@ const isProduction = process.env.NODE_ENV === 'production';
 
 // In production/Docker, always use puppeteer which includes Chrome
 if (isProduction) {
+    // Clear any conflicting environment variables that might interfere
+    delete process.env.PUPPETEER_EXECUTABLE_PATH;
+    delete process.env.CHROME_PATH;
+
     puppeteer = require('puppeteer');
 } else {
     // For local development, try puppeteer first, then puppeteer-core

@@ -13,11 +13,13 @@ WORKDIR /usr/src/app
 # Copy package files and set proper ownership
 COPY --chown=pptruser:pptruser package*.json ./
 
-# Install dependencies (puppeteer will download Chrome if needed)
+# Install dependencies
 RUN npm install --omit=dev --no-package-lock
 
-# Ensure Chrome is installed (the base image should have it, but just in case)
-RUN npx puppeteer browsers install chrome || true
+# The puppeteer Docker image comes with Chrome pre-installed
+# But we need to ensure puppeteer knows where to find it
+# Install Chrome through puppeteer to ensure compatibility
+RUN npx puppeteer browsers install chrome --install-deps
 
 # Copy application files with proper ownership
 COPY --chown=pptruser:pptruser . .
