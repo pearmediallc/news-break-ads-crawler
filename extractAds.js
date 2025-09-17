@@ -29,9 +29,10 @@ const path = require('path');
 const logger = require('./src/utils/logger');
 
 class ForYouAdExtractor {
-    constructor() {
+    constructor(continueSession = false) {
         this.extractedAds = [];
         this.seenAds = new Set();
+        this.continueSession = continueSession;
         this.sessionTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
         // Each session gets its own file - don't use the main extracted_ads.json
         this.sessionFile = path.join(__dirname, 'data', 'sessions', `session_${this.sessionTimestamp}.json`);
@@ -44,8 +45,12 @@ class ForYouAdExtractor {
         await fs.ensureDir(path.join(__dirname, 'data'));
         await fs.ensureDir(path.join(__dirname, 'data', 'sessions'));
 
-        // Start fresh for each session - no loading old ads
-        logger.info('Starting new extraction session: ' + this.sessionTimestamp);
+        // Load previous session if requested
+        if (this.continueSession) {
+            await this.loadPreviousSession();
+        } else {
+            logger.info('Starting new extraction session: ' + this.sessionTimestamp);
+        }
         logger.info('Session file: ' + path.basename(this.sessionFile));
 
         // Launch Chrome directly - no need for AdsPower on US server
@@ -173,7 +178,7 @@ class ForYouAdExtractor {
 
         // Wait for ForYou containers to load
         logger.info('⏳ Waiting for ForYou containers to load...');
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        await new Promise(resolve => setTimeout(resolve, 2000));
 
         // Check what's on the page
         const pageInfo = await this.page.evaluate(() => {
@@ -226,10 +231,10 @@ class ForYouAdExtractor {
         });
 
         logger.info('🔒 All clicks and navigation disabled');
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        await new Promise(resolve => setTimeout(resolve, 1000));  // Reduced wait
 
-        const scanInterval = 5000;      // 5 seconds
-        const scrollInterval = 3000;    // 3 seconds - scroll more frequently
+        const scanInterval = 2000;      // 2 seconds - scan more frequently
+        const scrollInterval = 1500;    // 1.5 seconds - scroll more frequently
         const maxScans = Math.floor(scrollDuration / scanInterval);
         const maxDuration = scrollDuration;  // User-defined duration
 
@@ -240,9 +245,9 @@ class ForYouAdExtractor {
         // Initial scroll to trigger content loading
         logger.info('🎬 Starting auto-scroll...');
         await this.page.evaluate(() => {
-            window.scrollBy(0, 300);
+            window.scrollBy(0, 500);  // Larger initial scroll
         });
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 500));  // Reduced wait
 
         while (scanCount < maxScans && (Date.now() - startTime < maxDuration)) {
             logger.info(`\n🔍 Scan #${scanCount + 1}`);
@@ -251,16 +256,14 @@ class ForYouAdExtractor {
             if (Date.now() - lastScrollTime >= scrollInterval) {
                 logger.info('📜 Auto-scrolling...');
 
-                // Smooth scroll with multiple small scrolls
-                for (let i = 0; i < 3; i++) {
-                    await this.page.evaluate(() => {
-                        window.scrollBy({
-                            top: window.innerHeight * 0.3,
-                            behavior: 'smooth'
-                        });
+                // Faster scroll with larger jumps
+                await this.page.evaluate(() => {
+                    window.scrollBy({
+                        top: window.innerHeight * 0.8,
+                        behavior: 'auto'  // Instant scroll instead of smooth
                     });
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                }
+                });
+                await new Promise(resolve => setTimeout(resolve, 200));  // Reduced wait
 
                 lastScrollTime = Date.now();
 
@@ -305,13 +308,114 @@ class ForYouAdExtractor {
         logger.info(`📊 Total ads: ${this.extractedAds.length}`);
     }
 
+    async loadPreviousSession() {
+        try {
+            // Check if there's a current session pointer
+            if (await fs.exists(this.currentSessionFile)) {
+                const currentSession = await fs.readJson(this.currentSessionFile);
+                const previousSessionFile = path.join(__dirname, 'data', 'sessions', currentSession.sessionFile);
+
+                if (await fs.exists(previousSessionFile)) {
+                    const previousData = await fs.readJson(previousSessionFile);
+
+                    // Load previous ads and seen ads
+                    this.extractedAds = previousData.ads || [];
+
+                    // Rebuild seen ads set
+                    for (const ad of this.extractedAds) {
+                        const key = `${ad.advertiser}_${ad.headline}_${ad.body}`;
+                        this.seenAds.add(key);
+                    }
+
+                    // Update session file to continue in the same file
+                    this.sessionFile = previousSessionFile;
+                    this.sessionTimestamp = previousData.sessionId || currentSession.sessionId;
+
+                    logger.info(`✅ Continuing previous session: ${currentSession.sessionFile}`);
+                    logger.info(`📊 Loaded ${this.extractedAds.length} existing ads`);
+                    logger.info(`🔄 Will continue adding to the same session file`);
+                } else {
+                    logger.info('Previous session file not found, starting fresh');
+                }
+            } else {
+                logger.info('No previous session found, starting fresh');
+            }
+        } catch (error) {
+            logger.error('Error loading previous session:', error.message);
+            logger.info('Starting fresh session instead');
+        }
+    }
+
+    async switchToSession(sessionFileName) {
+        try {
+            const sessionFile = path.join(__dirname, 'data', 'sessions', sessionFileName);
+
+            if (await fs.exists(sessionFile)) {
+                const sessionData = await fs.readJson(sessionFile);
+
+                // Clear current ads and load from selected session
+                this.extractedAds = sessionData.ads || [];
+                this.seenAds.clear();
+
+                // Rebuild seen ads set
+                for (const ad of this.extractedAds) {
+                    const key = `${ad.advertiser}_${ad.headline}_${ad.body}`;
+                    this.seenAds.add(key);
+                }
+
+                // Update current session pointer
+                this.sessionFile = sessionFile;
+                this.sessionTimestamp = sessionData.sessionId || sessionData.timestamp;
+
+                // Update current session pointer file
+                await fs.writeJson(this.currentSessionFile, {
+                    sessionFile: sessionFileName,
+                    timestamp: this.sessionTimestamp,
+                    totalAds: this.extractedAds.length,
+                    sessionId: this.sessionTimestamp
+                }, { spaces: 2 });
+
+                logger.info(`✅ Switched to session: ${sessionFileName}`);
+                logger.info(`📊 Loaded ${this.extractedAds.length} ads from this session`);
+
+                return true;
+            } else {
+                logger.error(`Session file not found: ${sessionFileName}`);
+                return false;
+            }
+        } catch (error) {
+            logger.error('Error switching session:', error.message);
+            return false;
+        }
+    }
+
+    async listSessions() {
+        try {
+            const sessionsIndexFile = path.join(__dirname, 'data', 'sessions', 'index.json');
+            if (await fs.exists(sessionsIndexFile)) {
+                const sessions = await fs.readJson(sessionsIndexFile);
+                logger.info('\n📂 Available Sessions:');
+                sessions.forEach((session, index) => {
+                    logger.info(`  ${index + 1}. ${session.file} - ${session.totalAds} ads (${session.timestamp})`);
+                });
+                return sessions;
+            } else {
+                logger.info('No sessions found');
+                return [];
+            }
+        } catch (error) {
+            logger.error('Error listing sessions:', error.message);
+            return [];
+        }
+    }
+
     async extractForYouAds() {
         const ads = await this.page.evaluate(() => {
             const foundAds = [];
 
             // Look for multiple possible ad container patterns
             // Pattern 1: ForYou containers (with or without hyphen)
-            document.querySelectorAll('[id^="ForYou"]').forEach(container => {
+            document.querySelectorAll('[id^="ForYou"], [id*="foryou" i], [id*="for-you" i]').forEach(container => {
                 console.log('Found ForYou container:', container.id);
                 const iframe = container.querySelector('iframe');
                 if (iframe) {
@@ -319,7 +423,7 @@ class ForYouAdExtractor {
                     foundAds.push({ container, iframe, type: 'ForYou' });
                 } else {
                     // Even without iframe, might still be an ad
-                    const hasAdContent = container.querySelector('[class*="sponsor"], [class*="promoted"], [class*="ad"]');
+                    const hasAdContent = container.querySelector('[class*="sponsor"], [class*="promoted"], [class*="ad"], [class*="Sponsor"], [class*="Promoted"]');
                     if (hasAdContent) {
                         console.log('  - Has sponsored content');
                         foundAds.push({ container, iframe: null, type: 'ForYou-NoIframe' });
@@ -328,11 +432,11 @@ class ForYouAdExtractor {
             });
 
             // Pattern 2: Any iframes with mspai class (common ad iframe class)
-            document.querySelectorAll('iframe[class*="mspai"], iframe[class*="nova"]').forEach(iframe => {
+            document.querySelectorAll('iframe[class*="mspai"], iframe[class*="nova"], iframe[id*="google_ads"], iframe[name*="google_ads"], iframe[src*="doubleclick"], iframe[src*="googlesyndication"]').forEach(iframe => {
                 // Check if not already captured
                 if (!foundAds.find(ad => ad.iframe === iframe)) {
-                    console.log('Found mspai/nova iframe:', iframe.className);
-                    foundAds.push({ container: iframe.parentElement, iframe, type: 'MSPAI' });
+                    console.log('Found ad iframe:', iframe.className || iframe.id || 'unnamed');
+                    foundAds.push({ container: iframe.parentElement, iframe, type: 'AdNetwork' });
                 }
             });
 
@@ -354,12 +458,37 @@ class ForYouAdExtractor {
                 }
             });
 
-            // Pattern 4: Divs with sponsored content indicators
-            document.querySelectorAll('[class*="sponsor"], [class*="promoted"], [class*="ad-"], [data-ad], [data-sponsor]').forEach(container => {
+            // Pattern 4: Divs with sponsored content indicators - More aggressive
+            document.querySelectorAll('[class*="sponsor" i], [class*="promoted" i], [class*="ad-" i], [class*="advertisement" i], [data-ad], [data-sponsor], [data-promoted], div[class*="taboola"], div[class*="outbrain"], div[id*="taboola"], div[id*="outbrain"]').forEach(container => {
                 // Skip if already processed
                 if (!foundAds.find(ad => ad.container === container)) {
-                    console.log('Found sponsored container:', container.className || container.tagName);
+                    console.log('Found sponsored container:', container.className || container.id || container.tagName);
                     foundAds.push({ container, iframe: null, type: 'Sponsored' });
+                }
+            });
+
+            // Pattern 5: Native ads that look like articles but are sponsored
+            document.querySelectorAll('article, div[class*="card"], div[class*="post"], div[class*="item"]').forEach(article => {
+                // Skip if already processed
+                if (foundAds.find(ad => ad.container === article)) return;
+
+                // Check if it's a sponsored article
+                const sponsorText = article.textContent.toLowerCase();
+                const hasSponsored = sponsorText.includes('sponsored') ||
+                                   sponsorText.includes('promoted') ||
+                                   sponsorText.includes('advertisement') ||
+                                   sponsorText.includes('partner content');
+
+                // Check for sponsor labels within the article
+                const sponsorEl = article.querySelector('span, div');
+                const hasSponsorLabel = sponsorEl && (
+                    sponsorEl.textContent.toLowerCase().includes('sponsor') ||
+                    sponsorEl.textContent.toLowerCase().includes('promoted')
+                );
+
+                if (hasSponsored || hasSponsorLabel) {
+                    console.log('Found native ad article');
+                    foundAds.push({ container: article, iframe: null, type: 'NativeAd' });
                 }
             });
 
@@ -614,21 +743,68 @@ class ForYouAdExtractor {
 
 // Main execution
 async function main() {
-    const extractor = new ForYouAdExtractor();
+    // Parse command line arguments
+    const args = process.argv.slice(2);
+    let url = 'https://www.newsbreak.com/new-york-ny';
+    let scrollMinutes = 5;
+    let continueSession = false;
+    let switchSession = null;
+    let listSessions = false;
+
+    // Parse arguments
+    for (let i = 0; i < args.length; i++) {
+        const arg = args[i];
+        if (arg === '--continue' || arg === '-c') {
+            continueSession = true;
+        } else if (arg === '--switch' || arg === '-s') {
+            switchSession = args[++i];
+        } else if (arg === '--list' || arg === '-l') {
+            listSessions = true;
+        } else if (arg.startsWith('http')) {
+            url = arg;
+        } else if (!isNaN(parseInt(arg))) {
+            scrollMinutes = parseInt(arg);
+        }
+    }
+
+    const extractor = new ForYouAdExtractor(continueSession);
 
     try {
+        // List sessions if requested
+        if (listSessions) {
+            await extractor.init();
+            await extractor.listSessions();
+            return;
+        }
+
         await extractor.init();
 
-        const url = process.argv[2] || 'https://www.newsbreak.com/new-york-ny';
-        const scrollMinutes = parseInt(process.argv[3]) || 5;  // Default 5 minutes
+        // Switch to specific session if requested
+        if (switchSession) {
+            const success = await extractor.switchToSession(switchSession);
+            if (!success) {
+                logger.error('Failed to switch session. Starting new session instead.');
+            }
+        }
+
         const scrollDuration = scrollMinutes * 60 * 1000;
 
+        logger.info(`\n📍 URL: ${url}`);
         logger.info(`⏱️ Scroll duration: ${scrollMinutes} minutes`);
+        logger.info(`💾 Session mode: ${continueSession ? 'Continuing previous' : (switchSession ? `Switched to ${switchSession}` : 'New session')}`);
+
         await extractor.extract(url, scrollDuration);
 
-        logger.info(`\n📁 Saved to: ${extractor.outputFile}`);
+        logger.info(`\n📁 Saved to: ${path.basename(extractor.sessionFile)}`);
         logger.info('🌐 View: Open ui/simple-ads.html');
         logger.info('✅ NO articles were extracted - ONLY ads from ForYou containers');
+
+        // Show usage info
+        logger.info('\n💡 Usage Tips:');
+        logger.info('  --continue or -c    : Continue from last session');
+        logger.info('  --switch <file> or -s : Switch to specific session');
+        logger.info('  --list or -l        : List all available sessions');
+        logger.info('  Example: node extractAds.js --continue https://newsbreak.com/local 10');
 
     } catch (error) {
         logger.error('Error:', error);
