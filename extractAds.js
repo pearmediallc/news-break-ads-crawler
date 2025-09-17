@@ -238,10 +238,9 @@ class ForYouAdExtractor {
 
         const scanInterval = 3000;      // 3 seconds - slower scans for more content loading
         const scrollInterval = 2500;    // 2.5 seconds - slower scrolling
-        const maxScans = Math.floor(scrollDuration / scanInterval);
         const maxDuration = scrollDuration;  // User-defined duration
 
-        logger.info(`🔍 Calculated: ${maxScans} scans over ${Math.floor(maxDuration/1000)}s (scan every ${scanInterval/1000}s)`);
+        logger.info(`🔍 Unlimited scans for ${Math.floor(maxDuration/1000)}s (scan every ${scanInterval/1000}s)`);
 
         const startTime = Date.now();
         let lastScrollTime = Date.now();
@@ -256,10 +255,11 @@ class ForYouAdExtractor {
         });
         await new Promise(resolve => setTimeout(resolve, 500));  // Reduced wait
 
-        while (scanCount < maxScans && (Date.now() - startTime < maxDuration)) {
+        while (Date.now() - startTime < maxDuration) {
             const timeRemaining = Math.max(0, maxDuration - (Date.now() - startTime));
-            const scansRemaining = maxScans - scanCount;
-            logger.info(`\n🔍 Scan #${scanCount + 1} (${scansRemaining} scans left, ${Math.floor(timeRemaining/1000)}s remaining)`);
+            const minutesRemaining = Math.floor(timeRemaining / 60000);
+            const secondsRemaining = Math.floor((timeRemaining % 60000) / 1000);
+            logger.info(`\n🔍 Scan #${scanCount + 1} (${minutesRemaining}m ${secondsRemaining}s remaining)`);
 
             // Scroll BEFORE extracting (scroll first, then extract)
             if (Date.now() - lastScrollTime >= scrollInterval) {
