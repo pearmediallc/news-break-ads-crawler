@@ -1,16 +1,22 @@
 FROM ghcr.io/puppeteer/puppeteer:23.11.0
 
+# Switch to root user for installation
+USER root
+
 # Set working directory
 WORKDIR /usr/src/app
 
-# Copy package files
-COPY package*.json ./
+# Copy package files and set proper ownership
+COPY --chown=pptruser:pptruser package*.json ./
 
 # Install dependencies
-RUN npm install --omit=dev
+RUN npm install --omit=dev --no-package-lock
 
-# Copy application files
-COPY . .
+# Switch back to pptruser
+USER pptruser
+
+# Copy application files with proper ownership
+COPY --chown=pptruser:pptruser . .
 
 # Create data directories
 RUN mkdir -p data/sessions
