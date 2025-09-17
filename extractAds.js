@@ -57,8 +57,37 @@ class ForYouAdExtractor {
 
         // In Docker/production, use the Chrome installed by puppeteer image
         if (isProduction) {
-            launchOptions.executablePath = '/usr/bin/google-chrome-stable';
-            logger.info('Using Chrome from Docker image: /usr/bin/google-chrome-stable');
+            // Try different possible Chrome/Chromium paths
+            const possiblePaths = [
+                process.env.PUPPETEER_EXECUTABLE_PATH,
+                process.env.CHROME_PATH,
+                '/usr/bin/chromium',
+                '/usr/bin/chromium-browser',
+                '/usr/bin/google-chrome',
+                '/usr/bin/google-chrome-stable'
+            ].filter(Boolean);
+
+            let foundPath = null;
+            for (const chromePath of possiblePaths) {
+                try {
+                    if (require('fs').existsSync(chromePath)) {
+                        foundPath = chromePath;
+                        logger.info(`Found Chrome/Chromium at: ${chromePath}`);
+                        break;
+                    }
+                } catch (e) {
+                    logger.info(`Path not accessible: ${chromePath}`);
+                }
+            }
+
+            if (foundPath) {
+                launchOptions.executablePath = foundPath;
+                logger.info(`Using Chrome from Docker image: ${foundPath}`);
+            } else {
+                // If no path found, let Puppeteer use its bundled Chrome
+                logger.info('No Chrome/Chromium found in expected paths, using Puppeteer bundled Chrome');
+                // Don't set executablePath - let puppeteer handle it
+            }
         }
         // If using puppeteer-core on Windows/local dev, specify Chrome path
         else if (isPuppeteerCore) {
@@ -78,8 +107,23 @@ class ForYouAdExtractor {
             }
         }
 
-        this.browser = await puppeteer.launch(launchOptions);
-        logger.info('✅ Chrome browser launched successfully');
+        try {
+            this.browser = await puppeteer.launch(launchOptions);
+            logger.info('✅ Chrome browser launched successfully');
+        } catch (launchError) {
+            logger.error(`Failed to launch browser with options: ${JSON.stringify(launchOptions)}`);
+            logger.error(`Error: ${launchError.message}`);
+
+            // If using executablePath failed, try without it (let puppeteer use its own)
+            if (launchOptions.executablePath) {
+                logger.info('Retrying without executablePath, using Puppeteer bundled browser...');
+                delete launchOptions.executablePath;
+                this.browser = await puppeteer.launch(launchOptions);
+                logger.info('✅ Chrome browser launched with bundled browser');
+            } else {
+                throw launchError;
+            }
+        }
 
         // Create new page
         this.page = await this.browser.newPage();
