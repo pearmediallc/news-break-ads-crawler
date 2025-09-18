@@ -2,20 +2,25 @@
 const NewsBreakCrawler = require('./crawlers/mainCrawler');
 const logger = require('./utils/logger');
 const chalk = require('chalk');
+const { createTimeController } = require('./utils/timeController');
 
 async function main() {
   const args = process.argv.slice(2);
-  
+
   // Parse command line arguments
-  let duration = 60; // default 1 minute
+  let duration = '60s'; // default 1 minute
   let sessionName = null;
-  
+  let unlimited = false;
+
   args.forEach((arg, index) => {
     if (arg === '--duration' && args[index + 1]) {
-      duration = parseInt(args[index + 1]);
+      duration = args[index + 1];
     }
     if (arg.startsWith('--duration=')) {
-      duration = parseInt(arg.split('=')[1]);
+      duration = arg.split('=')[1];
+    }
+    if (arg === '--unlimited' || arg === '-u') {
+      unlimited = true;
     }
     if (arg === '--name' && args[index + 1]) {
       sessionName = args[index + 1];
@@ -24,30 +29,48 @@ async function main() {
       sessionName = arg.split('=')[1];
     }
   });
-  
-  // Validation
-  if (duration < 10 || duration > 3600) {
-    console.error(chalk.red('❌ Duration must be between 10 seconds and 1 hour'));
+
+  // Create time controller with no restrictions
+  const timeController = createTimeController(unlimited ? 'unlimited' : duration);
+
+  // Show usage examples if invalid duration
+  if (!unlimited && !timeController.duration) {
+    console.log(chalk.yellow('📋 Usage examples:'));
+    console.log(chalk.gray('  npm start --duration 30s     (30 seconds)'));
+    console.log(chalk.gray('  npm start --duration 5m      (5 minutes)'));
+    console.log(chalk.gray('  npm start --duration 2h      (2 hours)'));
+    console.log(chalk.gray('  npm start --duration 9h      (9 hours)'));
+    console.log(chalk.gray('  npm start --duration 1d      (1 day)'));
+    console.log(chalk.gray('  npm start --duration 9h30m   (9 hours 30 minutes)'));
+    console.log(chalk.gray('  npm start --unlimited         (run indefinitely)'));
     process.exit(1);
   }
   
   const crawler = new NewsBreakCrawler({
-    duration,
+    timeController: timeController,
     sessionName: sessionName || `newsbreak_crawl_${Date.now()}`
   });
-  
+
   // Handle graceful shutdown
   process.on('SIGINT', async () => {
     console.log(chalk.yellow('\n⏹️  Stopping crawler...'));
+    timeController.stop();
     await crawler.cleanup();
     process.exit(0);
   });
-  
+
   try {
     console.log(chalk.blue.bold('🕷️  NewsBreak Ads Crawler'));
-    console.log(chalk.gray(`Duration: ${duration}s | Session: ${crawler.sessionName}`));
+    const status = timeController.getStatus();
+    console.log(chalk.gray(`Mode: ${unlimited ? 'UNLIMITED' : status.status} | Session: ${crawler.sessionName}`));
+    if (!unlimited) {
+      console.log(chalk.gray(`Duration: ${timeController.formatDuration(timeController.duration)}`));
+    }
     console.log('');
-    
+
+    // Start time controller
+    timeController.start();
+
     await crawler.initialize();
     const results = await crawler.startCrawling();
     
