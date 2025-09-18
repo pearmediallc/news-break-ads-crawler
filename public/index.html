@@ -313,7 +313,7 @@
         </div>
 
         <div class="control-panel">
-            <h2>Start New Extraction</h2>
+            <h2>Start New Extraction <span style="background: #10b981; color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-left: 10px;">v1.2</span></h2>
             <form class="extraction-form" id="extractionForm">
                 <div class="form-group">
                     <label for="url">NewsBreak URL</label>
@@ -337,6 +337,15 @@
                         title="Enter duration in minutes. Max: 10,080 min (7 days) • 540 min = 9 hours"
                         placeholder="e.g., 540 for 9hrs"
                     >
+                </div>
+                <div class="form-group">
+                    <label for="deviceMode">Device Mode</label>
+                    <select id="deviceMode" required>
+                        <option value="desktop" selected>🖥️ Desktop</option>
+                        <option value="mobile">📱 Mobile</option>
+                        <option value="tablet">📱 Tablet</option>
+                        <option value="mixed">🔄 Mixed (Rotate)</option>
+                    </select>
                 </div>
                 <button type="submit" class="btn btn-primary" id="startBtn">
                     🚀 Start Extraction
@@ -434,6 +443,7 @@
 
             const url = document.getElementById('url').value;
             const duration = document.getElementById('duration').value;
+            const deviceMode = document.getElementById('deviceMode').value;
 
             // Disable start button
             document.getElementById('startBtn').disabled = true;
@@ -444,7 +454,7 @@
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ url, duration })
+                    body: JSON.stringify({ url, duration, deviceMode })
                 });
 
                 const data = await response.json();

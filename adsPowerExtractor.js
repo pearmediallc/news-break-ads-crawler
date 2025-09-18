@@ -1,4 +1,4 @@
-// Enhanced AdsPower Extractor with API integration
+// Enhanced AdsPower Extractor v1.2 with Mobile Support
 const axios = require('axios');
 let puppeteer;
 try {
@@ -9,6 +9,8 @@ try {
 const fs = require('fs-extra');
 const path = require('path');
 const logger = require('./src/utils/logger');
+const MobileAdExtractor = require('./src/extractors/mobileAdExtractor');
+const { mobileHelpers } = require('./src/config/mobileConfig');
 
 const ADSPOWER_API = 'http://localhost:50325/api/v1';
 
@@ -146,9 +148,10 @@ class AdsPowerExtractor {
         }
     }
 
-    async extract(url = 'https://www.newsbreak.com', duration = 5) {
-        logger.info('🎯 AdsPower Extractor with USA IP');
+    async extract(url = 'https://www.newsbreak.com', duration = 5, deviceMode = 'desktop') {
+        logger.info('🎯 AdsPower Extractor v1.2 with USA IP');
         logger.info(`⏱️ Duration: ${duration} minutes`);
+        logger.info(`📱 Device Mode: ${deviceMode}`);
 
         // Try API connection first
         if (!await this.connectViaAPI()) {
@@ -173,7 +176,14 @@ class AdsPowerExtractor {
             });
         }
 
-        logger.info('✅ Ready to extract with USA IP!');
+        // Setup mobile environment if needed
+        if (deviceMode !== 'desktop') {
+            const mobileExtractor = new MobileAdExtractor(this.page, deviceMode);
+            await mobileExtractor.setupMobileEnvironment(deviceMode === 'tablet' ? 'tablet' : 'mobile');
+            this.mobileExtractor = mobileExtractor;
+        }
+
+        logger.info(`✅ Ready to extract with USA IP in ${deviceMode} mode!`);
 
         // Start auto-scrolling and extraction
         const scrollDuration = duration * 60000;
@@ -201,10 +211,21 @@ class AdsPowerExtractor {
                 await new Promise(resolve => setTimeout(resolve, 500));
             }
 
-            // Extract ads
-            const newAds = await this.extractAds();
+            // Extract ads based on device mode
+            let newAds = [];
+            if (this.mobileExtractor && deviceMode !== 'desktop') {
+                newAds = await this.mobileExtractor.extractMobileAds();
+                if (deviceMode === 'mixed' && scanCount % 3 === 0) {
+                    // Switch between mobile and desktop extraction
+                    const desktopAds = await this.extractAds();
+                    newAds.push(...desktopAds);
+                }
+            } else {
+                newAds = await this.extractAds();
+            }
+
             if (newAds.length > 0) {
-                logger.info(`✨ Found ${newAds.length} new ads`);
+                logger.info(`✨ Found ${newAds.length} new ${deviceMode} ads`);
                 this.extractedAds.push(...newAds);
                 await this.saveAds();
             }
@@ -424,16 +445,17 @@ class AdsPowerExtractor {
     }
 }
 
-// Main execution
+// Main execution v1.2
 async function main() {
     const url = process.argv[2] || 'https://www.newsbreak.com';
     const duration = parseInt(process.argv[3]) || 5;
+    const deviceMode = process.argv[4] || 'desktop'; // desktop, mobile, tablet, mixed
 
     const extractor = new AdsPowerExtractor();
 
     try {
         await extractor.init();
-        await extractor.extract(url, duration);
+        await extractor.extract(url, duration, deviceMode);
     } catch (error) {
         logger.error('Extraction failed:', error.message);
     } finally {

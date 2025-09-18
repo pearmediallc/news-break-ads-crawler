@@ -24,7 +24,7 @@ app.get('/', (req, res) => {
 
 // API endpoint to start extraction
 app.post('/api/extract/start', async (req, res) => {
-    const { url, duration } = req.body;
+    const { url, duration, deviceMode = 'desktop' } = req.body;
 
     // Validate input
     if (!url || !url.includes('newsbreak.com')) {
@@ -38,13 +38,14 @@ app.post('/api/extract/start', async (req, res) => {
 
     try {
         console.log(`Starting extraction...`);
-        console.log(`URL: ${url}, Duration: ${durationMinutes} minutes`);
+        console.log(`URL: ${url}, Duration: ${durationMinutes} minutes, Device: ${deviceMode}`);
 
         // Start extraction process
         const extractorProcess = spawn('node', [
             'extractAds.js',
             url,
-            durationMinutes.toString()
+            durationMinutes.toString(),
+            deviceMode
         ], {
             cwd: __dirname,
             shell: true,  // Changed to true for Windows compatibility
