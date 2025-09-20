@@ -1,8 +1,9 @@
-# Dependencies
-node_modules
+# Dependencies (MUST exclude to prevent platform conflicts)
+node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+package-lock.json
 
 # Runtime data
 pids

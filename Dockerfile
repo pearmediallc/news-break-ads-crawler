@@ -14,8 +14,16 @@ WORKDIR /usr/src/app
 # Copy package files and set proper ownership
 COPY --chown=pptruser:pptruser package*.json ./
 
-# Install dependencies
-RUN npm install --omit=dev --ignore-scripts && \
+# Install build dependencies for native modules
+RUN apt-get update && apt-get install -y \
+    python3 \
+    make \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install dependencies (allow scripts for native modules like sqlite3)
+RUN npm install --omit=dev && \
+    npm rebuild sqlite3 && \
     npm cache clean --force
 
 # Copy application files with proper ownership
