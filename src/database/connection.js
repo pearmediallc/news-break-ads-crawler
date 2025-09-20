@@ -69,13 +69,41 @@ class DatabaseConnection {
         }
       }
 
+      // Separate statements by type for proper execution order
+      const tableStatements = [];
+      const indexStatements = [];
+      const triggerStatements = [];
+
       for (const statement of statements) {
         if (statement.trim() && !statement.startsWith('--')) {
-          await this.run(statement);
+          const upperStatement = statement.toUpperCase().trim();
+          if (upperStatement.startsWith('CREATE TABLE')) {
+            tableStatements.push(statement);
+          } else if (upperStatement.startsWith('CREATE INDEX')) {
+            indexStatements.push(statement);
+          } else if (upperStatement.startsWith('CREATE TRIGGER')) {
+            triggerStatements.push(statement);
+          }
         }
       }
 
-      logger.info('Database schema initialized');
+      // Execute in proper order: tables first, then indexes, then triggers
+      logger.info('Creating database tables...');
+      for (const statement of tableStatements) {
+        await this.run(statement);
+      }
+
+      logger.info('Creating database indexes...');
+      for (const statement of indexStatements) {
+        await this.run(statement);
+      }
+
+      logger.info('Creating database triggers...');
+      for (const statement of triggerStatements) {
+        await this.run(statement);
+      }
+
+      logger.info('Database schema initialized successfully');
     } catch (error) {
       logger.error('Schema initialization failed:', error);
       throw error;

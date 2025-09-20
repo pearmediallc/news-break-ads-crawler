@@ -2,7 +2,7 @@
 const logger = require('../utils/logger');
 const fs = require('fs').promises;
 const path = require('path');
-const xlsx = require('xlsx');
+const ExcelJS = require('exceljs');
 
 class SimpleAdExtractor {
   constructor() {
@@ -171,31 +171,43 @@ class SimpleAdExtractor {
     await fs.mkdir(outputDir, { recursive: true });
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T')[0];
 
-    const excelData = this.extractedAds.map(ad => ({
-      'ID': ad.id,
-      'Heading': ad.heading || '',
-      'Description': ad.description || '',
-      'Image URL': ad.image || '',
-      'Link': ad.link || '',
-      'Extracted At': ad.timestamp
-    }));
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Ads');
 
-    const ws = xlsx.utils.json_to_sheet(excelData);
-    const wb = xlsx.utils.book_new();
-    xlsx.utils.book_append_sheet(wb, ws, 'Ads');
-
-    // Add column widths for better readability
-    ws['!cols'] = [
-      { wch: 20 }, // ID
-      { wch: 40 }, // Heading
-      { wch: 60 }, // Description
-      { wch: 50 }, // Image URL
-      { wch: 50 }, // Link
-      { wch: 25 }  // Extracted At
+    // Define columns
+    worksheet.columns = [
+      { header: 'ID', key: 'id', width: 20 },
+      { header: 'Heading', key: 'heading', width: 40 },
+      { header: 'Description', key: 'description', width: 60 },
+      { header: 'Image URL', key: 'image', width: 50 },
+      { header: 'Link', key: 'link', width: 50 },
+      { header: 'Extracted At', key: 'timestamp', width: 25 }
     ];
 
+    // Add data rows
+    this.extractedAds.forEach(ad => {
+      worksheet.addRow({
+        id: ad.id,
+        heading: ad.heading || '',
+        description: ad.description || '',
+        image: ad.image || '',
+        link: ad.link || '',
+        timestamp: ad.timestamp
+      });
+    });
+
+    // Style the header row
+    worksheet.getRow(1).eachCell((cell) => {
+      cell.font = { bold: true };
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE0E0E0' }
+      };
+    });
+
     const excelPath = path.join(outputDir, `newsbreak_ads_${timestamp}.xlsx`);
-    xlsx.writeFile(wb, excelPath);
+    await workbook.xlsx.writeFile(excelPath);
     logger.info(`📊 Excel saved: ${excelPath}`);
     return excelPath;
   }

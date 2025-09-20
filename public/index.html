@@ -596,6 +596,66 @@
             }
         }
 
+        async function checkSessionActiveExtraction(sessionFile) {
+            try {
+                const response = await fetch('/api/extract/active');
+                const data = await response.json();
+
+                if (data.success && data.activeExtractions.length > 0) {
+                    // Check if any active extraction matches this session
+                    const sessionId = sessionFile.replace('worker_', '').replace('.json', '');
+                    const matchingExtraction = data.activeExtractions.find(ext =>
+                        ext.id === sessionId ||
+                        ext.sessionId === sessionId ||
+                        ext.sessionFile === sessionFile
+                    );
+
+                    if (matchingExtraction) {
+                        console.log('🔄 Found active extraction for session:', sessionFile, matchingExtraction);
+
+                        // Show live extraction window
+                        showExtractionWindow(matchingExtraction);
+
+                        showAlert('info', `🔴 Live extraction detected - Session is actively running!`);
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to check session active extraction:', error);
+            }
+        }
+
+        function showExtractionWindow(extraction) {
+            // Show extraction window
+            const extractionWindow = document.getElementById('extractionWindow');
+            if (extractionWindow) {
+                extractionWindow.style.display = 'block';
+            }
+
+            // Update status display
+            updateExtractionStatus({
+                status: extraction.status,
+                progress: extraction.progress,
+                totalAds: extraction.totalAds,
+                logs: extraction.logs || []
+            });
+
+            // Show stop button
+            const stopBtn = document.getElementById('stopBtn');
+            if (stopBtn) {
+                stopBtn.style.display = 'inline-block';
+                stopBtn.disabled = false;
+            }
+
+            // Hide start button
+            const startBtn = document.getElementById('startBtn');
+            if (startBtn) {
+                startBtn.style.display = 'none';
+            }
+
+            // Store extraction ID for stop functionality
+            window.currentExtractionId = extraction.id;
+        }
+
         function handleRealTimeUpdate(data) {
             console.log('📡 Real-time update received:', data.type, data);
 
@@ -960,13 +1020,41 @@
                     }
                 }
 
+                // Get active extractions to mark them
+                const activeResponse = await fetch('/api/extract/active');
+                let activeExtractions = [];
+                if (activeResponse.ok) {
+                    const activeData = await activeResponse.json();
+                    if (activeData.success) {
+                        activeExtractions = activeData.activeExtractions;
+                    }
+                }
+
                 sessions.forEach(session => {
                     const date = new Date(session.timestamp);
                     const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
                     const option = document.createElement('option');
                     option.value = session.file;
+
+                    // Check if this session is currently active
+                    const sessionId = session.file.replace('worker_', '').replace('.json', '');
+                    const isActive = activeExtractions.some(ext =>
+                        ext.id === sessionId ||
+                        ext.sessionId === sessionId ||
+                        ext.sessionFile === session.file
+                    );
+
                     const isCurrent = session.file === currentSessionFile ? ' ⭐' : '';
-                    option.textContent = `${dateStr} (${session.totalAds || 0} ads)${isCurrent}`;
+                    const activeIndicator = isActive ? ' 🔴 LIVE' : '';
+
+                    option.textContent = `${dateStr} (${session.totalAds || 0} ads)${isCurrent}${activeIndicator}`;
+
+                    // Style active sessions differently
+                    if (isActive) {
+                        option.style.color = '#dc2626';
+                        option.style.fontWeight = 'bold';
+                    }
+
                     selector.appendChild(option);
                 });
             } catch (error) {
@@ -990,6 +1078,10 @@
                         await loadAds(sessionFile);
                         updateSessionInfo();
                         updateSessionFilterInfo(); // Update filter info when session changes
+
+                        // Check if this session has active extractions
+                        await checkSessionActiveExtraction(sessionFile);
+
                         showAlert('success', 'Switched to session: ' + sessionFile);
                     } else {
                         showAlert('error', 'Failed to switch session');
