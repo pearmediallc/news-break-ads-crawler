@@ -27,6 +27,7 @@ if (isProduction) {
 const fs = require('fs-extra');
 const path = require('path');
 const logger = require('./src/utils/logger');
+const DatabaseSyncService = require('./src/database/syncService');
 
 class ForYouAdExtractor {
     constructor(continueSession = false) {
@@ -38,12 +39,21 @@ class ForYouAdExtractor {
         this.sessionFile = path.join(__dirname, 'data', 'sessions', `session_${this.sessionTimestamp}.json`);
         // Keep a current session pointer
         this.currentSessionFile = path.join(__dirname, 'data', 'current_session.json');
+        this.dbSync = new DatabaseSyncService();
     }
 
     async init() {
         // Ensure data directories exist
         await fs.ensureDir(path.join(__dirname, 'data'));
         await fs.ensureDir(path.join(__dirname, 'data', 'sessions'));
+
+        // Initialize database sync
+        try {
+            await this.dbSync.initialize();
+            logger.info('Database sync service initialized');
+        } catch (error) {
+            logger.warn('Database sync initialization failed, continuing without DB sync:', error.message);
+        }
 
         // Only load previous session if we haven't already loaded a specific session
         // (switchToSession may have already been called)

@@ -3,6 +3,7 @@ const puppeteer = require('puppeteer-core');
 const fs = require('fs-extra');
 const path = require('path');
 const logger = require('./src/utils/logger');
+const DatabaseSyncService = require('./src/database/syncService');
 
 class AdsPowerCurrentExtractor {
     constructor() {
@@ -11,12 +12,21 @@ class AdsPowerCurrentExtractor {
         this.sessionTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
         this.outputFile = path.join(__dirname, 'data', 'extracted_ads.json');
         this.sessionFile = path.join(__dirname, 'data', 'sessions', `ads_${this.sessionTimestamp}.json`);
+        this.dbSync = new DatabaseSyncService();
     }
 
     async init() {
         // Ensure directories exist
         await fs.ensureDir(path.join(__dirname, 'data'));
         await fs.ensureDir(path.join(__dirname, 'data', 'sessions'));
+
+        // Initialize database sync
+        try {
+            await this.dbSync.initialize();
+            logger.info('Database sync service initialized');
+        } catch (error) {
+            logger.warn('Database sync initialization failed, continuing without DB sync:', error.message);
+        }
 
         // Load existing ads to avoid duplicates
         if (await fs.exists(this.outputFile)) {
@@ -284,14 +294,31 @@ class AdsPowerCurrentExtractor {
         // Save to main file
         await fs.writeJson(this.outputFile, this.extractedAds, { spaces: 2 });
 
-        // Save session file with timestamp
-        await fs.writeJson(this.sessionFile, {
+        // Create session data
+        const sessionData = {
             session: this.sessionTimestamp,
             startTime: this.sessionTimestamp,
             endTime: new Date().toISOString(),
             totalAds: this.extractedAds.length,
             ads: this.extractedAds
-        }, { spaces: 2 });
+        };
+
+        // Save session file with timestamp
+        await fs.writeJson(this.sessionFile, sessionData, { spaces: 2 });
+
+        // Sync to database
+        try {
+            await this.dbSync.syncSession({
+                sessionId: this.sessionTimestamp,
+                startTime: this.sessionTimestamp,
+                endTime: new Date().toISOString(),
+                totalAds: this.extractedAds.length,
+                ads: this.extractedAds,
+                file: `ads_${this.sessionTimestamp}.json`
+            });
+        } catch (error) {
+            logger.warn('Failed to sync session to database:', error.message);
+        }
 
         // Save latest for dashboard
         const latestFile = path.join(__dirname, 'data', 'latest_ads.json');

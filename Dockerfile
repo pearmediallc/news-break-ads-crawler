@@ -34,8 +34,12 @@ USER pptruser
 # Set environment variables
 ENV NODE_ENV=production
 
-# Expose port
-EXPOSE 3000
+# Expose port (Render uses PORT environment variable)
+EXPOSE 10000
+
+# Add health check endpoint
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:${PORT:-10000}/health || exit 1
 
 # Start the application
 CMD ["node", "app.js"]

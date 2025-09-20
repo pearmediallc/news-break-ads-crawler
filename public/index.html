@@ -303,12 +303,53 @@
         .hidden {
             display: none;
         }
+
+        /* Animation for new ads */
+        @keyframes slideInNew {
+            0% {
+                opacity: 0;
+                transform: translateY(-20px) scale(0.95);
+                border: 2px solid #10b981;
+                box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+            }
+            50% {
+                border: 2px solid #10b981;
+                box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+            }
+            100% {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+                border: 1px solid #e5e7eb;
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            }
+        }
+
+        .new-ad {
+            animation: slideInNew 0.5s ease-out;
+        }
+
+        /* Real-time status indicator */
+        .realtime-status {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background: #10b981;
+            border-radius: 50%;
+            margin-left: 5px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🎯 NewsBreak Ads Crawler Control Panel</h1>
+            <h1>🎯 NewsBreak Ads Crawler Control Panel <span id="realtimeIndicator" class="realtime-status" style="display: none;" title="Real-time updates connected"></span></h1>
             <p>Extract and manage advertisements from NewsBreak pages</p>
         </div>
 
@@ -326,6 +367,13 @@
                     >
                 </div>
                 <div class="form-group">
+                    <label for="extractionMode">Extraction Mode</label>
+                    <select id="extractionMode" onchange="toggleDurationField()" required>
+                        <option value="timed" selected>⏱️ Timed Extraction</option>
+                        <option value="unlimited">♾️ Unlimited (Until Stopped)</option>
+                    </select>
+                </div>
+                <div class="form-group" id="durationGroup">
                     <label for="duration">Duration (min) <small style="color: #999; font-weight: normal;">(max: 7 days)</small></label>
                     <input
                         type="number"
@@ -333,7 +381,6 @@
                         min="1"
                         max="10080"
                         value="5"
-                        required
                         title="Enter duration in minutes. Max: 10,080 min (7 days) • 540 min = 9 hours"
                         placeholder="e.g., 540 for 9hrs"
                     >
@@ -400,18 +447,60 @@
                     <button class="btn btn-success" onclick="refreshAds()">
                         🔄 Refresh
                     </button>
-                    <button class="btn btn-success" onclick="refreshNewAds()" title="Show only ads from last 5 minutes">
-                        ⚡ New Ads Only
+                    <button class="btn btn-primary" onclick="loadAllFromDatabase()" title="Load all ads from database">
+                        🗄️ Load All DB
                     </button>
-                    <button class="btn btn-success" onclick="exportData('json')">
-                        💾 Export JSON
-                    </button>
-                    <button class="btn btn-success" onclick="exportData('csv')">
-                        📊 Export CSV
-                    </button>
-                    <button class="btn btn-success" onclick="exportExcel()">
-                        📑 Export Excel
-                    </button>
+                    <div style="display: flex; gap: 5px; align-items: center;">
+                        <label for="timeframeFilter" style="font-size: 12px; color: #666;">Time Filter:</label>
+                        <select id="timeframeFilter" onchange="applyTimeFilter()" style="padding: 6px; border-radius: 6px; border: 1px solid #ddd; font-size: 12px;">
+                            <option value="">All Time</option>
+                            <option value="5">Last 5 min</option>
+                            <option value="15">Last 15 min</option>
+                            <option value="30">Last 30 min</option>
+                            <option value="60">Last 1 hour</option>
+                            <option value="180">Last 3 hours</option>
+                            <option value="720">Last 12 hours</option>
+                            <option value="1440">Last 24 hours</option>
+                            <option value="custom">Custom Time</option>
+                        </select>
+                    </div>
+                    <div id="customTimeControls" style="display: none; flex-direction: column; gap: 10px; background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #e5e7eb; margin-top: 10px;">
+                        <div style="display: flex; align-items: center; gap: 10px; font-weight: 600; color: #374151;">
+                            <span id="timeFilterMode">🕒 Custom Time Range</span>
+                            <span id="sessionFilterInfo" style="font-size: 12px; color: #6b7280; font-weight: normal;"></span>
+                        </div>
+
+                        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                            <label style="font-size: 12px; color: #374151; font-weight: 500;">From:</label>
+                            <input type="datetime-local" id="customTimeFrom" style="padding: 6px 8px; border-radius: 6px; border: 1px solid #d1d5db; font-size: 12px; min-width: 160px;">
+                            <label style="font-size: 12px; color: #374151; font-weight: 500;">To:</label>
+                            <input type="datetime-local" id="customTimeTo" style="padding: 6px 8px; border-radius: 6px; border: 1px solid #d1d5db; font-size: 12px; min-width: 160px;">
+                        </div>
+
+                        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                            <button onclick="applyCustomTimeFilter()" style="padding: 6px 12px; border-radius: 6px; background: #667eea; color: white; font-size: 12px; cursor: pointer; border: none; font-weight: 500;">Apply Range</button>
+                            <button onclick="clearTimeFilters()" style="padding: 6px 12px; border-radius: 6px; background: #ef4444; color: white; font-size: 12px; cursor: pointer; border: none; font-weight: 500;">Clear Filters</button>
+
+                            <div style="margin-left: 10px; padding-left: 10px; border-left: 1px solid #d1d5db;">
+                                <span style="font-size: 11px; color: #6b7280; margin-right: 5px;">Quick:</span>
+                                <button onclick="setQuickRange('today')" style="padding: 4px 8px; border-radius: 4px; border: 1px solid #d1d5db; background: white; font-size: 11px; cursor: pointer; margin-right: 4px;">Today</button>
+                                <button onclick="setQuickRange('yesterday')" style="padding: 4px 8px; border-radius: 4px; border: 1px solid #d1d5db; background: white; font-size: 11px; cursor: pointer; margin-right: 4px;">Yesterday</button>
+                                <button onclick="setQuickRange('week')" style="padding: 4px 8px; border-radius: 4px; border: 1px solid #d1d5db; background: white; font-size: 11px; cursor: pointer;">This Week</button>
+                                <button onclick="setQuickRange('last24h')" style="padding: 4px 8px; border-radius: 4px; border: 1px solid #d1d5db; background: white; font-size: 11px; cursor: pointer; margin-left: 4px;">Last 24h</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                        <button class="btn btn-success" onclick="exportData('json')" style="min-width: 120px;">
+                            💾 Export JSON
+                        </button>
+                        <button class="btn btn-success" onclick="exportData('csv')" style="min-width: 120px;">
+                            📊 Export CSV
+                        </button>
+                        <button class="btn btn-success" onclick="exportExcel()" style="min-width: 120px;">
+                            📑 Export Excel
+                        </button>
+                    </div>
                 </div>
             </div>
             <div class="loading" id="adsLoading">
@@ -427,12 +516,162 @@
         let statusCheckInterval = null;
         let adsData = [];
 
+        // Real-time updates via Server-Sent Events
+        let eventSource = null;
+
+        function connectToRealTimeUpdates() {
+            if (eventSource) {
+                eventSource.close();
+            }
+
+            eventSource = new EventSource('/api/events');
+
+            eventSource.onopen = function() {
+                console.log('✅ Real-time updates connected');
+                showAlert('success', 'Real-time updates connected');
+
+                // Show real-time indicator
+                const indicator = document.getElementById('realtimeIndicator');
+                if (indicator) {
+                    indicator.style.display = 'inline-block';
+                }
+            };
+
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleRealTimeUpdate(data);
+                } catch (error) {
+                    console.error('Failed to parse real-time update:', error);
+                }
+            };
+
+            eventSource.onerror = function(error) {
+                console.error('❌ Real-time connection error:', error);
+                showAlert('warning', 'Real-time connection lost - will reconnect');
+
+                // Hide real-time indicator
+                const indicator = document.getElementById('realtimeIndicator');
+                if (indicator) {
+                    indicator.style.display = 'none';
+                }
+
+                // Reconnect after delay
+                setTimeout(() => {
+                    if (eventSource.readyState === EventSource.CLOSED) {
+                        connectToRealTimeUpdates();
+                    }
+                }, 5000);
+            };
+        }
+
+        function handleRealTimeUpdate(data) {
+            console.log('📡 Real-time update:', data);
+
+            switch (data.type) {
+                case 'connected':
+                    console.log('Connected to real-time updates');
+                    break;
+
+                case 'new_ads':
+                    // Add new ads to the display dynamically
+                    if (data.newAds && data.newAds.length > 0) {
+                        addNewAdsToDisplay(data.newAds);
+                        updateAdCount(data.totalAds);
+                        showAlert('info', `🆕 ${data.newAds.length} new ads found!`);
+
+                        // Update session info with new count
+                        updateSessionInfo();
+                    }
+                    break;
+
+                case 'status_update':
+                    // Update extraction status
+                    if (data.status && data.status.status) {
+                        updateExtractionStatus(data.status);
+                    }
+                    break;
+            }
+        }
+
+        function addNewAdsToDisplay(newAds) {
+            // Prepend new ads to existing display
+            const grid = document.getElementById('adsGrid');
+            const existingContent = grid.innerHTML;
+
+            // Generate HTML for new ads
+            const newAdsHtml = newAds.map((ad, index) => {
+                const safeAdvertiser = escapeHtml(ad.advertiser);
+                const safeHeadline = escapeHtml(ad.headline);
+                const safeBody = escapeHtml(ad.body);
+                const safeImage = ad.image && typeof ad.image === 'string' && ad.image.trim() && !ad.image.includes('undefined') ? ad.image.trim() : '';
+                const safeLink = ad.link && typeof ad.link === 'string' && ad.link.trim() ? ad.link.trim() : '';
+
+                return `
+                    <div class="ad-card new-ad" data-index="${index}" style="animation: slideInNew 0.5s ease-out;">
+                        ${safeImage ?
+                            `<img src="${safeImage}" alt="${safeHeadline}"
+                             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; margin-bottom: 10px;"
+                             onerror="this.style.display='none'">` : ''}
+                        <div class="ad-advertiser">${safeAdvertiser}</div>
+                        <div class="ad-headline">${safeHeadline || 'No headline'}</div>
+                        ${safeBody ? `<div class="ad-body">${safeBody}</div>` : ''}
+                        <div style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; ${safeLink && safeImage ? 'justify-content: space-between' : ''};">
+                            ${safeLink ? `<a href="${safeLink}" target="_blank" class="ad-link">🔗 Visit Ad</a>` : ''}
+                            ${safeImage ?
+                                `<a onclick="downloadImage('${safeImage.replace(/'/g, "\\'")}', '${safeHeadline.replace(/'/g, "\\'")}')" class="ad-link" style="cursor: pointer; ${!safeLink ? 'margin-left: auto;' : ''}">📥 Download Image</a>` : ''}
+                        </div>
+                        <div style="font-size: 11px; color: #888; margin-top: 8px;">
+                            ${new Date(ad.timestamp).toLocaleString()} <span style="color: #10b981; font-weight: bold;">NEW</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Add new ads at the top
+            grid.innerHTML = newAdsHtml + existingContent;
+
+            // Remove animation class after animation completes
+            setTimeout(() => {
+                document.querySelectorAll('.new-ad').forEach(card => {
+                    card.classList.remove('new-ad');
+                    card.style.animation = '';
+                });
+            }, 500);
+
+            // Update global adsData array
+            adsData = newAds.concat(adsData);
+        }
+
+        function updateAdCount(totalAds) {
+            // Update the total ads counter
+            const totalAdsElement = document.getElementById('totalAds');
+            if (totalAdsElement) {
+                totalAdsElement.textContent = totalAds;
+            }
+        }
+
+        function updateExtractionStatus(status) {
+            // Update status badge and progress
+            if (status.status) {
+                showStatus(status.status, status.status);
+            }
+
+            if (status.progress !== undefined) {
+                // Update progress display if available
+                console.log(`Extraction progress: ${status.progress}%`);
+            }
+        }
+
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', () => {
             loadStats();
             loadAds();
             loadSessions();
             updateSessionInfo();
+
+            // Connect to real-time updates
+            connectToRealTimeUpdates();
 
             // Set up form submission
             document.getElementById('extractionForm').addEventListener('submit', startExtraction);
@@ -444,17 +683,53 @@
             const url = document.getElementById('url').value;
             const duration = document.getElementById('duration').value;
             const deviceMode = document.getElementById('deviceMode').value;
+            const extractionMode = document.getElementById('extractionMode').value;
 
             // Disable start button
             document.getElementById('startBtn').disabled = true;
 
             try {
+                // First create a new session
+                const sessionResponse = await fetch('/api/sessions/new', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (!sessionResponse.ok) {
+                    throw new Error('Failed to create new session');
+                }
+
+                const sessionData = await sessionResponse.json();
+                showAlert('success', `New session created: ${sessionData.sessionId || 'New Session'}`);
+
+                // Clear ads grid to show fresh start
+                document.getElementById('adsGrid').innerHTML = '<p style="text-align: center; padding: 20px;">New session started - waiting for ads...</p>';
+
+                // Immediately update UI with new session
+                document.getElementById('sessionSelector').value = '';
+                await loadSessions();
+                await loadAds();
+                await updateSessionInfo();
+
+                // Add a visual flash to the session info
+                const sessionInfo = document.getElementById('currentSessionInfo');
+                sessionInfo.style.transition = 'all 0.3s';
+                sessionInfo.style.color = '#10b981';
+                sessionInfo.style.fontWeight = 'bold';
+                setTimeout(() => {
+                    sessionInfo.style.color = '#666';
+                    sessionInfo.style.fontWeight = 'normal';
+                }, 2000);
+
+                // Now start extraction
                 const response = await fetch('/api/extract/start', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ url, duration, deviceMode })
+                    body: JSON.stringify({ url, duration, deviceMode, extractionMode })
                 });
 
                 const data = await response.json();
@@ -467,6 +742,9 @@
 
                     // Start monitoring status
                     startStatusMonitoring();
+
+                    // Start auto-refresh for ads
+                    startAutoRefresh();
                 } else {
                     showAlert('error', data.error || 'Failed to start extraction');
                     document.getElementById('startBtn').disabled = false;
@@ -490,6 +768,14 @@
                 if (response.ok) {
                     showStatus('stopped', 'Extraction stopped');
                     stopStatusMonitoring();
+
+                    // Final refresh to get all ads
+                    await loadAds();
+                    await loadStats();
+                    await loadSessions();
+                    updateSessionInfo();
+
+                    showAlert('success', 'Extraction stopped successfully');
                 } else {
                     showAlert('error', data.error || 'Failed to stop extraction');
                 }
@@ -501,6 +787,12 @@
         function startStatusMonitoring() {
             if (statusCheckInterval) clearInterval(statusCheckInterval);
 
+            // Immediately refresh session display when extraction starts
+            setTimeout(() => {
+                loadCurrentSession();
+                loadStats();
+            }, 1000); // Give worker a moment to create session
+
             statusCheckInterval = setInterval(async () => {
                 if (!currentExtractionId) return;
 
@@ -510,6 +802,11 @@
 
                     if (response.ok) {
                         updateStatus(data);
+
+                        // Refresh current session display during extraction
+                        if (data.status === 'running' && data.sessionFile) {
+                            loadCurrentSession();
+                        }
 
                         if (data.status !== 'running') {
                             stopStatusMonitoring();
@@ -538,9 +835,34 @@
             // Update logs
             if (statusData.logs && statusData.logs.length > 0) {
                 const logsContainer = document.getElementById('logsContainer');
-                logsContainer.innerHTML = statusData.logs.map(log =>
-                    `<div>${escapeHtml(log)}</div>`
-                ).join('');
+                logsContainer.innerHTML = statusData.logs.map(log => {
+                    // Handle different log formats
+                    if (typeof log === 'string') {
+                        return `<div style="font-family: monospace; font-size: 12px; margin: 2px 0; color: #333;">${escapeHtml(log)}</div>`;
+                    } else if (typeof log === 'object' && log !== null) {
+                        // Handle structured log objects
+                        const timestamp = log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : '';
+                        const message = log.message || log.msg || JSON.stringify(log);
+                        const level = log.level || 'info';
+
+                        const levelColors = {
+                            'error': '#dc3545',
+                            'warn': '#fd7e14',
+                            'info': '#0dcaf0',
+                            'debug': '#6c757d'
+                        };
+
+                        const color = levelColors[level] || '#333';
+
+                        return `<div style="font-family: monospace; font-size: 12px; margin: 2px 0; color: ${color};">
+                            ${timestamp ? `<span style="color: #6c757d;">[${timestamp}]</span> ` : ''}
+                            <span style="color: ${color}; font-weight: bold;">[${level.toUpperCase()}]</span>
+                            ${escapeHtml(message)}
+                        </div>`;
+                    } else {
+                        return `<div style="font-family: monospace; font-size: 12px; margin: 2px 0; color: #dc3545;">Invalid log entry: ${typeof log}</div>`;
+                    }
+                }).join('');
                 logsContainer.scrollTop = logsContainer.scrollHeight;
             }
         }
@@ -615,6 +937,7 @@
                     if (response.ok) {
                         await loadAds(sessionFile);
                         updateSessionInfo();
+                        updateSessionFilterInfo(); // Update filter info when session changes
                         showAlert('success', 'Switched to session: ' + sessionFile);
                     } else {
                         showAlert('error', 'Failed to switch session');
@@ -626,40 +949,111 @@
                 // Load current session
                 await loadAds('');
                 updateSessionInfo();
+                updateSessionFilterInfo(); // Update filter info when session changes
             }
         }
 
         function displayAds(ads) {
             const grid = document.getElementById('adsGrid');
 
+            console.log('displayAds called with:', ads); // Debug log
+
             if (!ads || ads.length === 0) {
                 grid.innerHTML = '<p>No ads found. Start an extraction to collect ads.</p>';
                 return;
             }
 
-            // Filter out invalid ads and only show real ads
-            const validAds = ads.filter(ad =>
-                ad.advertiser && ad.advertiser !== 'Protected Ad' &&
-                (ad.headline || ad.body)
-            );
+            // Handle different data structures and normalize
+            let processedAds = ads;
+
+            // If ads is a string, try to parse it
+            if (typeof ads === 'string') {
+                try {
+                    processedAds = JSON.parse(ads);
+                } catch (e) {
+                    console.error('Failed to parse ads string:', e);
+                    grid.innerHTML = '<p>Error: Invalid ads data format</p>';
+                    return;
+                }
+            }
+
+            // Ensure we have an array
+            if (!Array.isArray(processedAds)) {
+                console.error('Ads is not an array:', processedAds);
+                grid.innerHTML = '<p>Error: Ads data is not in the expected format</p>';
+                return;
+            }
+
+            // Filter out invalid ads and normalize field names
+            const validAds = processedAds.filter(ad => {
+                if (!ad || typeof ad !== 'object') return false;
+
+                // Normalize field names from different sources
+                const normalized = {
+                    advertiser: ad.advertiser || ad.sponsor || 'Unknown',
+                    headline: ad.headline || ad.heading || ad.title || '',
+                    body: ad.body || ad.description || '',
+                    image: ad.image || ad.imageUrl || ad.img || '',
+                    link: ad.link || ad.linkUrl || ad.url || '',
+                    timestamp: ad.timestamp || new Date().toISOString()
+                };
+
+                // Only include ads with meaningful content
+                return normalized.advertiser !== 'Protected Ad' &&
+                       (normalized.headline || normalized.body);
+            }).map(ad => ({
+                advertiser: ad.advertiser || ad.sponsor || 'Unknown',
+                headline: ad.headline || ad.heading || ad.title || '',
+                body: ad.body || ad.description || '',
+                image: ad.image || ad.imageUrl || ad.img || '',
+                link: ad.link || ad.linkUrl || ad.url || '',
+                timestamp: ad.timestamp || new Date().toISOString()
+            }));
 
             if (validAds.length === 0) {
                 grid.innerHTML = '<p>No valid ads to display. Start a new extraction.</p>';
                 return;
             }
 
-            grid.innerHTML = validAds.map(ad => `
-                <div class="ad-card">
-                    ${ad.image && !ad.image.includes('undefined') ?
-                        `<img src="${ad.image}" alt="${escapeHtml(ad.headline || 'Ad image')}"
-                         style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; margin-bottom: 10px;"
-                         onerror="this.style.display='none'">` : ''}
-                    <div class="ad-advertiser">${escapeHtml(ad.advertiser || 'Unknown')}</div>
-                    <div class="ad-headline">${escapeHtml(ad.headline || 'No headline')}</div>
-                    ${ad.body ? `<div class="ad-body">${escapeHtml(ad.body)}</div>` : ''}
-                    ${ad.link ? `<a href="${ad.link}" target="_blank" class="ad-link">🔗 Visit Ad</a>` : ''}
-                </div>
-            `).join('');
+            try {
+                grid.innerHTML = validAds.map((ad, index) => {
+                    // Safely escape all fields
+                    const safeAdvertiser = escapeHtml(ad.advertiser);
+                    const safeHeadline = escapeHtml(ad.headline);
+                    const safeBody = escapeHtml(ad.body);
+                    const safeImage = ad.image && typeof ad.image === 'string' && ad.image.trim() && !ad.image.includes('undefined') ? ad.image.trim() : '';
+                    const safeLink = ad.link && typeof ad.link === 'string' && ad.link.trim() ? ad.link.trim() : '';
+
+                    return `
+                        <div class="ad-card" data-index="${index}">
+                            ${safeImage ?
+                                `<img src="${safeImage}" alt="${safeHeadline}"
+                                 style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; margin-bottom: 10px;"
+                                 onerror="this.style.display='none'">` : ''}
+                            <div class="ad-advertiser">${safeAdvertiser}</div>
+                            <div class="ad-headline">${safeHeadline || 'No headline'}</div>
+                            ${safeBody ? `<div class="ad-body">${safeBody}</div>` : ''}
+                            <div style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; ${safeLink && safeImage ? 'justify-content: space-between' : ''};">
+                                ${safeLink ? `<a href="${safeLink}" target="_blank" class="ad-link">🔗 Visit Ad</a>` : ''}
+                                ${safeImage ?
+                                    `<a onclick="downloadImage('${safeImage.replace(/'/g, "\\'")}', '${safeHeadline.replace(/'/g, "\\'")}')" class="ad-link" style="cursor: pointer; ${!safeLink ? 'margin-left: auto;' : ''}">📥 Download Image</a>` : ''}
+                            </div>
+                            <div style="font-size: 11px; color: #888; margin-top: 8px;">
+                                ${new Date(ad.timestamp).toLocaleString()}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('Error rendering ads:', error);
+                grid.innerHTML = `
+                    <div style="text-align: center; padding: 40px; color: #ff6b6b;">
+                        <h3>Error Displaying Ads</h3>
+                        <p>There was an error rendering the ads. Check the console for details.</p>
+                        <button onclick="location.reload()" style="margin-top: 10px; padding: 8px 16px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer;">Reload Page</button>
+                    </div>
+                `;
+            }
         }
 
         async function loadStats() {
@@ -741,6 +1135,49 @@
             }
         }
 
+        async function loadAllFromDatabase() {
+            document.getElementById('adsLoading').classList.add('active');
+
+            try {
+                // Query all ads from database
+                const response = await fetch('/api/query/ads/query', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        filters: {},
+                        sort: { field: 'timestamp', direction: 'DESC' },
+                        pagination: { limit: 5000, offset: 0 }
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    adsData = result.data;
+                    displayAds(result.data);
+                    updateStats(result.data);
+
+                    // Clear session selector to indicate we're viewing all data
+                    document.getElementById('sessionSelector').value = '';
+
+                    // Update session info to show database mode
+                    document.getElementById('currentSessionInfo').textContent =
+                        `(Database Mode: ${result.data.length} total ads)`;
+
+                    showAlert('success', `Loaded ${result.data.length} ads from database`);
+                } else {
+                    showAlert('error', 'Failed to load ads from database');
+                }
+            } catch (error) {
+                console.error('Failed to load all ads from database:', error);
+                showAlert('error', 'Failed to load ads from database');
+            } finally {
+                document.getElementById('adsLoading').classList.remove('active');
+            }
+        }
+
         async function updateSessionInfo() {
             try {
                 const response = await fetch('/api/sessions/current');
@@ -749,7 +1186,15 @@
                     if (session) {
                         const date = new Date(session.timestamp);
                         const timeStr = date.toLocaleTimeString();
-                        document.getElementById('currentSessionInfo').textContent = `(Session: ${timeStr})`;
+                        const dateStr = date.toLocaleDateString();
+
+                        // Also get current ads count
+                        const adsResponse = await fetch('/api/ads');
+                        const ads = await adsResponse.json();
+                        const adsCount = ads ? ads.length : 0;
+
+                        document.getElementById('currentSessionInfo').textContent =
+                            `(Session: ${dateStr} ${timeStr} | ${adsCount} ads)`;
                     } else {
                         document.getElementById('currentSessionInfo').textContent = '';
                     }
@@ -806,19 +1251,362 @@
         }
 
         function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            if (typeof str === 'object') {
+                return JSON.stringify(str);
+            }
             const div = document.createElement('div');
-            div.textContent = str;
+            div.textContent = String(str);
             return div.innerHTML;
         }
 
-        // Auto-refresh ads every 30 seconds
-        setInterval(() => {
-            if (!currentExtractionId || document.getElementById('statusBadge').textContent !== 'running') {
-                const sessionSelector = document.getElementById('sessionSelector');
-                loadAds(sessionSelector.value);
-                loadStats();
+        // Toggle duration field based on extraction mode
+        function toggleDurationField() {
+            const extractionMode = document.getElementById('extractionMode').value;
+            const durationGroup = document.getElementById('durationGroup');
+            const durationInput = document.getElementById('duration');
+
+            if (extractionMode === 'unlimited') {
+                durationGroup.style.display = 'none';
+                durationInput.removeAttribute('required');
+            } else {
+                durationGroup.style.display = 'block';
+                durationInput.setAttribute('required', 'required');
             }
-        }, 30000);
+        }
+
+        // Apply time filter to current ads
+        async function applyTimeFilter() {
+            const timeframe = document.getElementById('timeframeFilter').value;
+            const customTimeControls = document.getElementById('customTimeControls');
+
+            // Show/hide custom time controls
+            if (timeframe === 'custom') {
+                customTimeControls.style.display = 'flex';
+                updateSessionFilterInfo();
+                return;
+            } else {
+                customTimeControls.style.display = 'none';
+            }
+
+            try {
+                let url = '/api/ads';
+                const currentSession = document.getElementById('sessionSelector').value;
+
+                const params = new URLSearchParams();
+                if (currentSession) {
+                    params.append('session', currentSession);
+                }
+                if (timeframe) {
+                    params.append('timeframe', timeframe);
+                }
+
+                if (params.toString()) {
+                    url += '?' + params.toString();
+                }
+
+                const response = await fetch(url);
+                const ads = await response.json();
+
+                adsData = ads;
+                displayAds(ads);
+                updateStats(ads);
+
+                const filterText = timeframe ?
+                    `Showing ads from last ${timeframe} minutes` :
+                    'Showing all ads';
+
+                showAlert('info', filterText);
+            } catch (error) {
+                console.error('Failed to apply time filter:', error);
+                showAlert('error', 'Failed to filter ads');
+            }
+        }
+
+        // Apply custom time filter with date range
+        async function applyCustomTimeFilter() {
+            const fromDate = document.getElementById('customTimeFrom').value;
+            const toDate = document.getElementById('customTimeTo').value;
+
+            if (!fromDate || !toDate) {
+                showAlert('error', 'Please select both start and end dates');
+                return;
+            }
+
+            const fromTime = new Date(fromDate);
+            const toTime = new Date(toDate);
+
+            if (fromTime >= toTime) {
+                showAlert('error', 'Start date must be before end date');
+                return;
+            }
+
+            document.getElementById('adsLoading').classList.add('active');
+
+            try {
+                const sessionSelector = document.getElementById('sessionSelector');
+                const currentSession = sessionSelector.value;
+
+                if (currentSession) {
+                    // Filter within specific session
+                    await filterSessionByTimeRange(currentSession, fromTime, toTime);
+                } else {
+                    // Filter across all sessions/database
+                    await filterAllByTimeRange(fromTime, toTime);
+                }
+            } catch (error) {
+                console.error('Failed to apply custom time filter:', error);
+                showAlert('error', 'Failed to apply time filter');
+            } finally {
+                document.getElementById('adsLoading').classList.remove('active');
+            }
+        }
+
+        // Filter ads within a specific session by time range
+        async function filterSessionByTimeRange(sessionFile, fromTime, toTime) {
+            try {
+                // First load the full session
+                const sessionResponse = await fetch(`/api/ads?session=${sessionFile}`);
+                const sessionAds = await sessionResponse.json();
+
+                // Filter by time range
+                const filteredAds = sessionAds.filter(ad => {
+                    if (!ad.timestamp) return false;
+                    const adTime = new Date(ad.timestamp);
+                    return adTime >= fromTime && adTime <= toTime;
+                });
+
+                adsData = filteredAds;
+                displayAds(filteredAds);
+                updateStats(filteredAds);
+
+                const fromFormatted = fromTime.toLocaleString();
+                const toFormatted = toTime.toLocaleString();
+                const sessionName = sessionFile.replace('.json', '').replace('session_', '');
+
+                // Update session info to show filtering
+                document.getElementById('currentSessionInfo').textContent =
+                    `(Session: ${sessionName} | ${filteredAds.length} ads | ${fromFormatted} to ${toFormatted})`;
+
+                showAlert('success', `Found ${filteredAds.length} ads in session from ${fromFormatted} to ${toFormatted}`);
+            } catch (error) {
+                console.error('Failed to filter session by time:', error);
+                showAlert('error', 'Failed to filter session by time range');
+            }
+        }
+
+        // Filter all ads by time range (database query)
+        async function filterAllByTimeRange(fromTime, toTime) {
+            try {
+                const response = await fetch('/api/query/ads/query', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        filters: {
+                            dateRange: {
+                                start: fromTime.toISOString(),
+                                end: toTime.toISOString()
+                            }
+                        },
+                        sort: { field: 'timestamp', direction: 'DESC' },
+                        pagination: { limit: 2000, offset: 0 }
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    adsData = result.data;
+                    displayAds(result.data);
+                    updateStats(result.data);
+
+                    const fromFormatted = fromTime.toLocaleString();
+                    const toFormatted = toTime.toLocaleString();
+
+                    // Update session info to show database filtering
+                    document.getElementById('currentSessionInfo').textContent =
+                        `(Database Filter: ${result.data.length} ads | ${fromFormatted} to ${toFormatted})`;
+
+                    showAlert('success', `Found ${result.data.length} ads from database between ${fromFormatted} and ${toFormatted}`);
+                } else {
+                    showAlert('error', 'Failed to query database for time range');
+                }
+            } catch (error) {
+                console.error('Failed to filter database by time:', error);
+                showAlert('error', 'Failed to filter database by time range');
+            }
+        }
+
+        // Update session filter info display
+        function updateSessionFilterInfo() {
+            const sessionSelector = document.getElementById('sessionSelector');
+            const sessionFilterInfo = document.getElementById('sessionFilterInfo');
+            const currentSession = sessionSelector.value;
+
+            if (currentSession) {
+                const selectedOption = sessionSelector.options[sessionSelector.selectedIndex];
+                sessionFilterInfo.textContent = `Filtering within: ${selectedOption.textContent}`;
+            } else {
+                sessionFilterInfo.textContent = 'Filtering current session (or all data if no session)';
+            }
+        }
+
+        // Set quick date ranges
+        function setQuickRange(range) {
+            const now = new Date();
+            const fromInput = document.getElementById('customTimeFrom');
+            const toInput = document.getElementById('customTimeTo');
+
+            let fromDate, toDate;
+
+            switch (range) {
+                case 'today':
+                    fromDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0);
+                    toDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59);
+                    break;
+                case 'yesterday':
+                    fromDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 0, 0);
+                    toDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59);
+                    break;
+                case 'week':
+                    const weekStart = new Date(now);
+                    weekStart.setDate(now.getDate() - now.getDay()); // Start of week (Sunday)
+                    weekStart.setHours(0, 0, 0, 0);
+                    fromDate = weekStart;
+                    toDate = new Date(now);
+                    break;
+                case 'last24h':
+                    fromDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+                    toDate = new Date(now);
+                    break;
+                default:
+                    return;
+            }
+
+            // Format dates for datetime-local input
+            fromInput.value = formatDateTimeLocal(fromDate);
+            toInput.value = formatDateTimeLocal(toDate);
+
+            // Auto-apply the filter
+            applyCustomTimeFilter();
+        }
+
+        // Helper function to format date for datetime-local input
+        function formatDateTimeLocal(date) {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            return `${year}-${month}-${day}T${hours}:${minutes}`;
+        }
+
+        // Clear time filters and reload session
+        async function clearTimeFilters() {
+            // Clear the date inputs
+            document.getElementById('customTimeFrom').value = '';
+            document.getElementById('customTimeTo').value = '';
+
+            // Reset time filter dropdown
+            document.getElementById('timeframeFilter').value = '';
+
+            document.getElementById('adsLoading').classList.add('active');
+
+            try {
+                // Reload the current session or all data
+                const sessionSelector = document.getElementById('sessionSelector');
+                const currentSession = sessionSelector.value;
+
+                if (currentSession) {
+                    // Reload the full session
+                    await loadSession(currentSession);
+                    showAlert('success', 'Time filters cleared - showing full session');
+                } else {
+                    // Reload current session ads
+                    await loadAds();
+                    await updateSessionInfo();
+                    showAlert('success', 'Time filters cleared - showing current session');
+                }
+            } catch (error) {
+                console.error('Failed to clear filters:', error);
+                showAlert('error', 'Failed to clear filters');
+            } finally {
+                document.getElementById('adsLoading').classList.remove('active');
+            }
+        }
+
+        // Download image function
+        async function downloadImage(imageUrl, fileName) {
+            try {
+                // Use our server proxy to bypass CORS
+                const proxyUrl = `/api/download-image?url=${encodeURIComponent(imageUrl)}`;
+
+                const response = await fetch(proxyUrl);
+                if (!response.ok) {
+                    throw new Error('Failed to fetch image');
+                }
+
+                const blob = await response.blob();
+                const objectUrl = URL.createObjectURL(blob);
+
+                // Create a temporary anchor element and trigger download
+                const link = document.createElement('a');
+                link.href = objectUrl;
+                link.download = `${fileName.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${Date.now()}.jpg`;
+                link.style.display = 'none';
+
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+
+                // Clean up object URL after a delay
+                setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+
+                showAlert('success', 'Image downloaded successfully');
+            } catch (error) {
+                console.error('Failed to download image:', error);
+                showAlert('error', 'Failed to download image. Please try again.');
+            }
+        }
+
+        // Auto-refresh ads - faster when extraction is running
+        let autoRefreshInterval = null;
+        const startAutoRefresh = () => {
+            if (autoRefreshInterval) clearInterval(autoRefreshInterval);
+
+            // Check status badge to determine if extraction is running
+            const checkAndRefresh = () => {
+                const isRunning = document.getElementById('statusBadge')?.textContent === 'running';
+                const sessionSelector = document.getElementById('sessionSelector');
+
+                if (isRunning) {
+                    // When running, always load current session
+                    loadCurrentSession();
+                } else if (sessionSelector && sessionSelector.value) {
+                    // When not running, load selected session
+                    loadAds(sessionSelector.value);
+                } else {
+                    // Default to current session
+                    loadCurrentSession();
+                }
+                loadStats();
+            };
+
+            // Faster refresh when extraction is running
+            const isRunning = document.getElementById('statusBadge')?.textContent === 'running';
+            const interval = isRunning ? 5000 : 30000;
+
+            autoRefreshInterval = setInterval(checkAndRefresh, interval);
+        };
+
+        // Start auto-refresh and update interval when status changes
+        startAutoRefresh();
+        setInterval(() => {
+            // Restart with appropriate interval
+            startAutoRefresh();
+        }, 10000); // Check if we need to change refresh rate every 10 seconds
     </script>
 </body>
 </html>

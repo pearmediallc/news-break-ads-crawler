@@ -2,15 +2,23 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs-extra');
 const { spawn } = require('child_process');
+const queryRoutes = require('./src/api/queryRoutes');
+const BackgroundExtractionService = require('./src/services/backgroundExtractor');
 const app = express();
 
 // Store active extraction processes
 const activeExtractions = new Map();
 
+// Initialize background extraction service
+const backgroundExtractor = new BackgroundExtractionService();
+
 // Middleware
 app.use(express.json());
 app.use(express.static('public'));
 app.use('/data', express.static('data'));
+
+// Database query API routes
+app.use('/api/query', queryRoutes);
 
 // Health check endpoint for Render
 app.get('/health', (req, res) => {
@@ -24,7 +32,7 @@ app.get('/', (req, res) => {
 
 // API endpoint to start extraction
 app.post('/api/extract/start', async (req, res) => {
-    const { url, duration, deviceMode = 'desktop' } = req.body;
+    const { url, duration, deviceMode = 'desktop', extractionMode = 'timed' } = req.body;
 
     // Validate input
     if (!url || !url.includes('newsbreak.com')) {
@@ -34,78 +42,40 @@ app.post('/api/extract/start', async (req, res) => {
     }
 
     const extractionId = Date.now().toString();
-    const durationMinutes = parseInt(duration) || 5;
+    const durationMinutes = extractionMode === 'unlimited' ? null : (parseInt(duration) || 5);
 
     try {
-        console.log(`Starting extraction...`);
-        console.log(`URL: ${url}, Duration: ${durationMinutes} minutes, Device: ${deviceMode}`);
+        console.log(`Starting ${extractionMode} extraction...`);
+        console.log(`URL: ${url}, Duration: ${durationMinutes ? durationMinutes + ' minutes' : 'unlimited'}, Device: ${deviceMode}`);
 
-        // Start extraction process
-        const extractorProcess = spawn('node', [
-            'extractAds.js',
+        // Use background extraction service for better reliability
+        const result = await backgroundExtractor.startExtraction({
             url,
-            durationMinutes.toString(),
-            deviceMode
-        ], {
-            cwd: __dirname,
-            shell: true,  // Changed to true for Windows compatibility
-            windowsHide: false,
-            env: { ...process.env },  // Pass environment variables
-            stdio: ['ignore', 'pipe', 'pipe']  // Proper stdio handling
+            duration: durationMinutes,
+            deviceMode,
+            extractionMode,
+            sessionId: extractionId
         });
 
-        // Store process reference
+        // Store extraction reference
         activeExtractions.set(extractionId, {
-            process: extractorProcess,
+            backgroundExtraction: true,
             startTime: new Date(),
             url,
             duration: durationMinutes,
+            deviceMode,
+            extractionMode,
             status: 'running',
             logs: []
         });
 
-        // Capture output
-        extractorProcess.stdout.on('data', (data) => {
-            const extraction = activeExtractions.get(extractionId);
-            const output = data.toString();
-            console.log('Extraction output:', output);
-            if (extraction) {
-                extraction.logs.push(output);
-            }
-        });
-
-        extractorProcess.stderr.on('data', (data) => {
-            const extraction = activeExtractions.get(extractionId);
-            const errorMsg = data.toString();
-            console.error('Extraction stderr:', errorMsg);
-            if (extraction) {
-                extraction.logs.push(`ERROR: ${errorMsg}`);
-            }
-        });
-
-        extractorProcess.on('error', (error) => {
-            console.error('Failed to start extraction process:', error);
-            const extraction = activeExtractions.get(extractionId);
-            if (extraction) {
-                extraction.status = 'failed';
-                extraction.logs.push(`SPAWN ERROR: ${error.message}`);
-            }
-        });
-
-        extractorProcess.on('close', (code) => {
-            console.log(`Extraction process exited with code ${code}`);
-            const extraction = activeExtractions.get(extractionId);
-            if (extraction) {
-                extraction.status = code === 0 ? 'completed' : 'failed';
-                extraction.endTime = new Date();
-            }
-        });
-
         res.json({
             extractionId,
-            message: 'Extraction started successfully',
-            duration: durationMinutes,
-            url
+            message: `${extractionMode} extraction started successfully`,
+            duration: durationMinutes ? `${durationMinutes} minutes` : 'unlimited',
+            url,
+            extractionMode,
+            deviceMode
         });
 
     } catch (error) {
@@ -117,48 +87,92 @@ app.post('/api/extract/start', async (req, res) => {
 });
 
 // API endpoint to stop extraction
-app.post('/api/extract/stop/:id', (req, res) => {
-    const { id } = req.params;
-    const extraction = activeExtractions.get(id);
+app.post('/api/extract/stop/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const extraction = activeExtractions.get(id);
 
-    if (!extraction) {
-        return res.status(404).json({ error: 'Extraction not found' });
-    }
+        if (!extraction) {
+            return res.status(404).json({ error: 'Extraction not found' });
+        }
 
-    if (extraction.process && extraction.status === 'running') {
-        extraction.process.kill();
-        extraction.status = 'stopped';
-        extraction.endTime = new Date();
+        if (extraction.backgroundExtraction) {
+            // Stop background extraction
+            await backgroundExtractor.stopExtraction(id);
+            extraction.status = 'stopped';
+            extraction.endTime = new Date();
+        } else if (extraction.process && extraction.status === 'running') {
+            // Stop legacy process-based extraction
+            extraction.process.kill();
+            extraction.status = 'stopped';
+            extraction.endTime = new Date();
+        }
+
         res.json({ message: 'Extraction stopped successfully' });
-    } else {
-        res.status(400).json({ error: 'Extraction is not running' });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to stop extraction', details: error.message });
     }
 });
 
 // API endpoint to get extraction status
-app.get('/api/extract/status/:id', (req, res) => {
-    const { id } = req.params;
-    const extraction = activeExtractions.get(id);
+app.get('/api/extract/status/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const extraction = activeExtractions.get(id);
 
-    if (!extraction) {
-        return res.status(404).json({ error: 'Extraction not found' });
+        if (!extraction) {
+            return res.status(404).json({ error: 'Extraction not found' });
+        }
+
+        let status = extraction;
+
+        // Get detailed status from background extractor if available
+        if (extraction.backgroundExtraction) {
+            const backgroundStatus = await backgroundExtractor.getExtractionStatus(id);
+            if (backgroundStatus) {
+                status = {
+                    ...extraction,
+                    ...backgroundStatus,
+                    logs: backgroundStatus.logs || extraction.logs
+                };
+            }
+        }
+
+        res.json({
+            id,
+            status: status.status,
+            startTime: status.startTime,
+            endTime: status.endTime,
+            url: status.url,
+            duration: status.duration,
+            extractionMode: status.extractionMode,
+            deviceMode: status.deviceMode,
+            totalAds: status.totalAds || 0,
+            progress: status.progress,
+            logs: (status.logs || []).slice(-50) // Last 50 log entries
+        });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to get extraction status', details: error.message });
     }
-
-    res.json({
-        id,
-        status: extraction.status,
-        startTime: extraction.startTime,
-        endTime: extraction.endTime,
-        url: extraction.url,
-        duration: extraction.duration,
-        logs: extraction.logs.slice(-50) // Last 50 log entries
-    });
 });
 
-// API endpoint to get ads from current or specific session
+// Get all active extractions
+app.get('/api/extract/active', async (req, res) => {
+    try {
+        const activeExtractions = await backgroundExtractor.getActiveExtractions();
+        res.json({
+            count: activeExtractions.length,
+            extractions: activeExtractions
+        });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to get active extractions', details: error.message });
+    }
+});
+
+// API endpoint to get ads from current or specific session with time filtering
 app.get('/api/ads', async (req, res) => {
     try {
-        const { session, refresh } = req.query;
+        const { session, refresh, timeframe } = req.query;
 
         if (session) {
             // Load specific session
@@ -178,17 +192,27 @@ app.get('/api/ads', async (req, res) => {
                 if (await fs.exists(sessionFile)) {
                     const sessionData = await fs.readJson(sessionFile);
 
-                    // If refresh is requested, only return ads from last 5 minutes
+                    let ads = sessionData.ads || [];
+
+                    // Apply time filtering
                     if (refresh === 'true') {
                         const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
-                        const freshAds = (sessionData.ads || []).filter(ad => {
+                        ads = ads.filter(ad => {
                             const adTime = new Date(ad.timestamp).getTime();
                             return adTime > fiveMinutesAgo;
                         });
-                        res.json(freshAds);
-                    } else {
-                        res.json(sessionData.ads || []);
+                    } else if (timeframe) {
+                        const timeframeMinutes = parseInt(timeframe);
+                        if (!isNaN(timeframeMinutes)) {
+                            const timeframeAgo = Date.now() - (timeframeMinutes * 60 * 1000);
+                            ads = ads.filter(ad => {
+                                const adTime = new Date(ad.timestamp).getTime();
+                                return adTime > timeframeAgo;
+                            });
+                        }
                     }
+
+                    res.json(ads);
                 } else {
                     res.json([]);
                 }
@@ -264,13 +288,74 @@ app.get('/api/sessions/:filename', async (req, res) => {
     }
 });
 
+// API endpoint to proxy image download
+app.get('/api/download-image', async (req, res) => {
+    const { url } = req.query;
+
+    if (!url) {
+        return res.status(400).json({ error: 'Image URL is required' });
+    }
+
+    try {
+        const axios = require('axios');
+        const response = await axios.get(url, {
+            responseType: 'arraybuffer',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+        });
+
+        // Get content type from response headers
+        const contentType = response.headers['content-type'] || 'image/jpeg';
+
+        // Set appropriate headers for download
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Content-Disposition', 'attachment; filename=image.jpg');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+
+        // Send the image data
+        res.send(Buffer.from(response.data));
+    } catch (error) {
+        console.error('Failed to download image:', error.message);
+        res.status(500).json({ error: 'Failed to download image' });
+    }
+});
+
 // API endpoint to export data
 app.get('/api/export/:format', async (req, res) => {
     const { format } = req.params;
+    const { session } = req.query;
 
     try {
-        const adsFile = path.join(__dirname, 'data', 'extracted_ads.json');
-        const ads = await fs.readJson(adsFile);
+        let ads = [];
+
+        if (session) {
+            // Export specific session
+            const sessionFile = path.join(__dirname, 'data', 'sessions', session);
+            if (await fs.exists(sessionFile)) {
+                const sessionData = await fs.readJson(sessionFile);
+                ads = sessionData.ads || [];
+            }
+        } else {
+            // Export current session
+            const currentSessionFile = path.join(__dirname, 'data', 'current_session.json');
+            if (await fs.exists(currentSessionFile)) {
+                const currentSession = await fs.readJson(currentSessionFile);
+                const sessionFile = path.join(__dirname, 'data', 'sessions', currentSession.sessionFile);
+                if (await fs.exists(sessionFile)) {
+                    const sessionData = await fs.readJson(sessionFile);
+                    ads = sessionData.ads || [];
+                }
+            }
+        }
+
+        // If no session data, try legacy extracted_ads.json
+        if (ads.length === 0) {
+            const adsFile = path.join(__dirname, 'data', 'extracted_ads.json');
+            if (await fs.exists(adsFile)) {
+                ads = await fs.readJson(adsFile);
+            }
+        }
 
         if (format === 'json') {
             res.setHeader('Content-Disposition', 'attachment; filename=ads.json');
@@ -285,7 +370,8 @@ app.get('/api/export/:format', async (req, res) => {
             res.status(400).json({ error: 'Invalid export format' });
         }
     } catch (error) {
-        res.status(500).json({ error: 'Failed to export data' });
+        console.error('Export error:', error);
+        res.status(500).json({ error: 'Failed to export data: ' + error.message });
     }
 });
 
@@ -421,6 +507,105 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 3000;
+
+// Store SSE connections for real-time updates
+const sseConnections = new Set();
+
+// SSE endpoint for real-time updates
+app.get('/api/events', (req, res) => {
+  // Set SSE headers
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Cache-Control'
+  });
+
+  // Send initial connection message
+  res.write('data: {"type":"connected","message":"Real-time updates connected"}\n\n');
+
+  // Add connection to active connections
+  sseConnections.add(res);
+
+  // Handle client disconnect
+  req.on('close', () => {
+    sseConnections.delete(res);
+  });
+
+  req.on('aborted', () => {
+    sseConnections.delete(res);
+  });
+});
+
+// Function to broadcast updates to all connected clients
+function broadcastUpdate(data) {
+  const message = `data: ${JSON.stringify(data)}\n\n`;
+
+  // Send to all connected clients
+  sseConnections.forEach(connection => {
+    try {
+      connection.write(message);
+    } catch (error) {
+      // Remove dead connections
+      sseConnections.delete(connection);
+    }
+  });
+}
+
+// Initialize background extractor service
+(async () => {
+    try {
+        await backgroundExtractor.initialize();
+        console.log('Background extraction service initialized');
+
+        // Override handleWorkerMessage to broadcast real-time updates
+        const originalHandleWorkerMessage = backgroundExtractor.handleWorkerMessage;
+        backgroundExtractor.handleWorkerMessage = async function(extractionId, message) {
+          // Call original handler
+          const result = await originalHandleWorkerMessage.call(this, extractionId, message);
+
+          // Broadcast real-time updates
+          if (message.type === 'ads_update' && message.data.newAds.length > 0) {
+            broadcastUpdate({
+              type: 'new_ads',
+              extractionId: extractionId,
+              newAds: message.data.newAds,
+              totalAds: message.data.totalAds,
+              timestamp: new Date().toISOString()
+            });
+          }
+
+          if (message.type === 'status_update') {
+            broadcastUpdate({
+              type: 'status_update',
+              extractionId: extractionId,
+              status: message.data,
+              timestamp: new Date().toISOString()
+            });
+          }
+
+          return result;
+        };
+
+    } catch (error) {
+        console.error('Failed to initialize background extraction service:', error);
+    }
+})();
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+    console.log('Shutting down gracefully...');
+    await backgroundExtractor.cleanup();
+    process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+    console.log('Shutting down gracefully...');
+    await backgroundExtractor.cleanup();
+    process.exit(0);
+});
+
 app.listen(PORT, () => {
     console.log(`🚀 NewsBreak Ads Crawler Server running on port ${PORT}`);
     console.log(`📊 Dashboard: http://localhost:${PORT}`);
