@@ -500,6 +500,34 @@ app.get('/api/health', (req, res) => {
     });
 });
 
+// Get active extractions endpoint
+app.get('/api/extract/active', async (req, res) => {
+    try {
+        const activeExtractions = await backgroundExtractor.getActiveExtractions();
+        res.json({
+            success: true,
+            activeExtractions: activeExtractions
+        });
+    } catch (error) {
+        console.error('Failed to get active extractions:', error);
+        res.status(500).json({ error: 'Failed to get active extractions' });
+    }
+});
+
+// Get all extraction status endpoint
+app.get('/api/extract/status', async (req, res) => {
+    try {
+        const extractions = await backgroundExtractor.getExtractionStatus();
+        res.json({
+            success: true,
+            extractions: extractions
+        });
+    } catch (error) {
+        console.error('Failed to get extraction status:', error);
+        res.status(500).json({ error: 'Failed to get extraction status' });
+    }
+});
+
 // Error handling
 app.use((err, req, res, next) => {
     console.error(err.stack);
@@ -566,12 +594,13 @@ function broadcastUpdate(data) {
           const result = await originalHandleWorkerMessage.call(this, extractionId, message);
 
           // Broadcast real-time updates
-          if (message.type === 'ads_update' && message.data.newAds.length > 0) {
+          if (message.type === 'ads_update') {
             broadcastUpdate({
               type: 'new_ads',
               extractionId: extractionId,
-              newAds: message.data.newAds,
-              totalAds: message.data.totalAds,
+              newAds: message.data.newAds || [],
+              totalAds: message.data.totalAds || 0,
+              latestAds: message.data.latestAds || [],
               timestamp: new Date().toISOString()
             });
           }
@@ -581,6 +610,26 @@ function broadcastUpdate(data) {
               type: 'status_update',
               extractionId: extractionId,
               status: message.data,
+              timestamp: new Date().toISOString()
+            });
+          }
+
+          if (message.type === 'session_created') {
+            broadcastUpdate({
+              type: 'session_created',
+              extractionId: extractionId,
+              sessionFile: message.data.sessionFile,
+              sessionId: message.data.sessionId,
+              timestamp: new Date().toISOString()
+            });
+          }
+
+          if (message.type === 'log') {
+            broadcastUpdate({
+              type: 'log',
+              extractionId: extractionId,
+              message: message.data.message,
+              level: message.data.level || 'info',
               timestamp: new Date().toISOString()
             });
           }

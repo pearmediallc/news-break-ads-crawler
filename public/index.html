@@ -565,8 +565,39 @@
             };
         }
 
+        async function checkActiveExtractions() {
+            try {
+                const response = await fetch('/api/extract/active');
+                const data = await response.json();
+
+                if (data.success && data.activeExtractions.length > 0) {
+                    console.log('🔄 Found active extractions:', data.activeExtractions);
+
+                    // Show extraction window for the first active extraction
+                    const activeExtraction = data.activeExtractions[0];
+                    showAlert('info', `🔄 Reconnected to active extraction: ${activeExtraction.id}`);
+
+                    // Update UI to show active extraction
+                    updateExtractionStatus({
+                        status: activeExtraction.status,
+                        progress: activeExtraction.progress,
+                        totalAds: activeExtraction.totalAds,
+                        logs: activeExtraction.logs
+                    });
+
+                    // Show extraction window if hidden
+                    const extractionWindow = document.getElementById('extractionWindow');
+                    if (extractionWindow) {
+                        extractionWindow.style.display = 'block';
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to check active extractions:', error);
+            }
+        }
+
         function handleRealTimeUpdate(data) {
-            console.log('📡 Real-time update:', data);
+            console.log('📡 Real-time update received:', data.type, data);
 
             switch (data.type) {
                 case 'connected':
@@ -574,15 +605,22 @@
                     break;
 
                 case 'new_ads':
+                    // Always update total ads count even if no new ads
+                    if (data.totalAds !== undefined) {
+                        updateAdCount(data.totalAds);
+                    }
+
                     // Add new ads to the display dynamically
                     if (data.newAds && data.newAds.length > 0) {
                         addNewAdsToDisplay(data.newAds);
-                        updateAdCount(data.totalAds);
                         showAlert('info', `🆕 ${data.newAds.length} new ads found!`);
-
-                        // Update session info with new count
-                        updateSessionInfo();
+                    } else if (data.latestAds && data.latestAds.length > 0) {
+                        // If no new ads but total count changed, refresh display
+                        loadSessionData(currentSessionFile);
                     }
+
+                    // Update session info with new count
+                    updateSessionInfo();
                     break;
 
                 case 'status_update':
@@ -590,6 +628,17 @@
                     if (data.status && data.status.status) {
                         updateExtractionStatus(data.status);
                     }
+                    break;
+
+                case 'session_created':
+                    // New session created - refresh session list
+                    showAlert('success', `📋 Session created: ${data.sessionId}`);
+                    updateSessionInfo();
+                    break;
+
+                case 'log':
+                    // Log messages from extraction worker
+                    console.log(`[${data.level.toUpperCase()}] ${data.message}`);
                     break;
             }
         }
@@ -672,6 +721,9 @@
 
             // Connect to real-time updates
             connectToRealTimeUpdates();
+
+            // Check for active extractions on page load
+            checkActiveExtractions();
 
             // Set up form submission
             document.getElementById('extractionForm').addEventListener('submit', startExtraction);

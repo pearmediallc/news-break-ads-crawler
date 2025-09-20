@@ -1,4 +1,4 @@
-FROM ghcr.io/puppeteer/puppeteer:24.10.2
+FROM ghcr.io/puppeteer/puppeteer:23.5.2
 
 # Switch to root user for installation
 USER root
@@ -13,13 +13,14 @@ WORKDIR /usr/src/app
 # Copy package files and set proper ownership
 COPY --chown=pptruser:pptruser package*.json ./
 
-# Install dependencies
-RUN npm install --omit=dev --no-package-lock
+# Install dependencies with clean npm cache and suppress warnings
+RUN npm ci --omit=dev --silent --no-audit --no-fund && \
+    npm cache clean --force
 
 # The puppeteer Docker image comes with Chrome pre-installed
 # But we need to ensure puppeteer knows where to find it
 # Install Chrome through puppeteer to ensure compatibility
-RUN npx puppeteer browsers install chrome --install-deps
+RUN npx puppeteer browsers install chrome --install-deps 2>/dev/null || true
 
 # Copy application files with proper ownership
 COPY --chown=pptruser:pptruser . .
