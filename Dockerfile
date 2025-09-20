@@ -3,8 +3,9 @@ FROM ghcr.io/puppeteer/puppeteer:23.5.2
 # Switch to root user for installation
 USER root
 
-# The puppeteer Docker image installs Chrome in its cache directory
-# Set the cache directory to match the image's setup
+# Set environment variables for npm
+ENV NODE_ENV=production
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_CACHE_DIR=/home/pptruser/.cache/puppeteer
 
 # Set working directory
@@ -13,27 +14,19 @@ WORKDIR /usr/src/app
 # Copy package files and set proper ownership
 COPY --chown=pptruser:pptruser package*.json ./
 
-# Install dependencies with clean npm cache and suppress warnings
-RUN npm ci --omit=dev --silent --no-audit --no-fund && \
+# Install dependencies
+RUN npm install --omit=dev --ignore-scripts && \
     npm cache clean --force
-
-# The puppeteer Docker image comes with Chrome pre-installed
-# But we need to ensure puppeteer knows where to find it
-# Install Chrome through puppeteer to ensure compatibility
-RUN npx puppeteer browsers install chrome --install-deps 2>/dev/null || true
 
 # Copy application files with proper ownership
 COPY --chown=pptruser:pptruser . .
 
 # Create data and logs directories with proper ownership
-RUN mkdir -p data/sessions data/exports ui/data logs && \
-    chown -R pptruser:pptruser data ui/data logs
+RUN mkdir -p data/sessions data/exports logs && \
+    chown -R pptruser:pptruser data logs
 
 # Switch back to pptruser
 USER pptruser
-
-# Set environment variables
-ENV NODE_ENV=production
 
 # Expose port (Render uses PORT environment variable)
 EXPOSE 10000
