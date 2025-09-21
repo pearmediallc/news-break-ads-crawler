@@ -127,24 +127,18 @@ class WorkerAdExtractor {
           forYouSelectors.forEach(selector => {
             try {
               const containers = document.querySelectorAll(selector);
-              console.log(`Selector "${selector}" found ${containers.length} containers`);
+              if (containers.length > 0) {
+                console.log(`Found ${containers.length} containers with "${selector}"`);
+              }
 
               containers.forEach((container, index) => {
                 // Skip if already processed
                 if (foundAds.find(ad => ad.container === container)) return;
 
-                console.log(`Checking container ${index + 1}:`, {
-                  id: container.id,
-                  className: container.className,
-                  tagName: container.tagName,
-                  hasIframe: !!container.querySelector('iframe')
-                });
-
                 // Check for iframe (primary ad indicator)
                 const iframe = container.querySelector('iframe');
                 if (iframe) {
-                  console.log('✅ Found ForYou container with iframe:', container.id || container.className);
-                  console.log('  Iframe src:', iframe.src?.substring(0, 100) || 'no src');
+                  console.log('✅ ForYou container with iframe:', container.id || container.className);
                   foundAds.push({ container, iframe, type: 'ForYou-Iframe' });
                   return;
                 }
@@ -155,7 +149,7 @@ class WorkerAdExtractor {
                                    container.textContent.toLowerCase().includes('promoted');
 
                 if (hasAdContent) {
-                  console.log('✅ Found ForYou container with sponsored content:', container.id || container.className);
+                  console.log('✅ ForYou sponsored content:', container.id || container.className);
                   foundAds.push({ container, iframe: null, type: 'ForYou-Sponsored' });
                 }
               });
@@ -166,34 +160,30 @@ class WorkerAdExtractor {
 
           console.log(`🎯 UNLIMITED MODE: Found ${foundAds.length} ForYou ads`);
 
-          // Fallback: If no ForYou containers found, try alternative approaches for desktop
+          // Fallback: If no ForYou containers found, try alternative approaches
           if (foundAds.length === 0) {
-            console.log('⚠️ No ForYou containers found, trying fallback selectors for desktop...');
-
             // Try common iframe selectors as fallback
             const fallbackIframes = document.querySelectorAll('iframe[src*="doubleclick"], iframe[src*="googlesyndication"], iframe[src*="amazon-adsystem"], iframe[class*="ad"], iframe[id*="ad"]');
-            console.log(`Found ${fallbackIframes.length} potential ad iframes`);
 
             fallbackIframes.forEach((iframe, index) => {
               if (index < 10) { // Limit to 10 fallback ads per scan
                 const container = iframe.closest('div, section, article') || iframe.parentElement;
-                console.log(`✅ Fallback: Found ad iframe #${index + 1}:`, iframe.src?.substring(0, 50));
                 foundAds.push({ container, iframe, type: 'Fallback-Iframe' });
               }
             });
 
             // Try looking for any sponsored content
             const sponsoredElements = document.querySelectorAll('[class*="sponsor" i], [class*="promoted" i], [data-ad], [data-sponsor]');
-            console.log(`Found ${sponsoredElements.length} sponsored elements`);
 
             sponsoredElements.forEach((element, index) => {
               if (index < 5 && !foundAds.find(ad => ad.container === element)) { // Limit to 5 sponsored elements
-                console.log(`✅ Fallback: Found sponsored element #${index + 1}:`, element.className);
                 foundAds.push({ container: element, iframe: null, type: 'Fallback-Sponsored' });
               }
             });
 
-            console.log(`🔄 FALLBACK: Added ${foundAds.length} potential ads for desktop mode`);
+            if (foundAds.length > 0) {
+              console.log(`🔄 Fallback detection found ${foundAds.length} potential ads`);
+            }
           }
 
         } else {
@@ -222,24 +212,14 @@ class WorkerAdExtractor {
           forYouSelectors.forEach(selector => {
             try {
               const containers = document.querySelectorAll(selector);
-              console.log(`Selector "${selector}" found ${containers.length} containers`);
 
               containers.forEach((container, index) => {
                 // Skip if already processed
                 if (foundAds.find(ad => ad.container === container)) return;
 
-                console.log(`Checking container ${index + 1}:`, {
-                  id: container.id,
-                  className: container.className,
-                  tagName: container.tagName,
-                  hasIframe: !!container.querySelector('iframe')
-                });
-
                 // Check for iframe (primary ad indicator)
                 const iframe = container.querySelector('iframe');
                 if (iframe) {
-                  console.log('✅ Found ForYou container with iframe:', container.id || container.className);
-                  console.log('  Iframe src:', iframe.src?.substring(0, 100) || 'no src');
                   foundAds.push({ container, iframe, type: 'ForYou' });
                   return;
                 }
@@ -250,7 +230,6 @@ class WorkerAdExtractor {
                                    container.textContent.toLowerCase().includes('promoted');
 
                 if (hasAdContent) {
-                  console.log('✅ Found ForYou container with sponsored content:', container.id || container.className);
                   foundAds.push({ container, iframe: null, type: 'ForYou-NoIframe' });
                 }
               });
@@ -261,38 +240,29 @@ class WorkerAdExtractor {
 
           // Add the same fallback logic as unlimited mode
           if (foundAds.length === 0) {
-            console.log('⚠️ No ForYou containers found in TIMED mode, trying fallback selectors...');
-
             // Try common iframe selectors as fallback
             const fallbackIframes = document.querySelectorAll('iframe[src*="doubleclick"], iframe[src*="googlesyndication"], iframe[src*="amazon-adsystem"], iframe[class*="ad"], iframe[id*="ad"]');
-            console.log(`Found ${fallbackIframes.length} potential ad iframes`);
 
             fallbackIframes.forEach((iframe, index) => {
               if (index < 10) { // Limit to 10 fallback ads per scan
                 const container = iframe.closest('div, section, article') || iframe.parentElement;
-                console.log(`✅ Fallback: Found ad iframe #${index + 1}:`, iframe.src?.substring(0, 50));
                 foundAds.push({ container, iframe, type: 'Fallback-Iframe' });
               }
             });
 
             // Try looking for any sponsored content
             const sponsoredElements = document.querySelectorAll('[class*="sponsor" i], [class*="promoted" i], [data-ad], [data-sponsor]');
-            console.log(`Found ${sponsoredElements.length} sponsored elements`);
 
             sponsoredElements.forEach((element, index) => {
               if (index < 5 && !foundAds.find(ad => ad.container === element)) { // Limit to 5 sponsored elements
-                console.log(`✅ Fallback: Found sponsored element #${index + 1}:`, element.className);
                 foundAds.push({ container: element, iframe: null, type: 'Fallback-Sponsored' });
               }
             });
-
-            console.log(`🔄 FALLBACK: Added ${foundAds.length} potential ads for desktop mode`);
           }
 
           // PATTERN 2: Ad network iframes
           document.querySelectorAll('iframe[class*="mspai"], iframe[class*="nova"], iframe[id*="google_ads"], iframe[name*="google_ads"], iframe[src*="doubleclick"], iframe[src*="googlesyndication"]').forEach(iframe => {
             if (!foundAds.find(ad => ad.iframe === iframe)) {
-              console.log('Found ad iframe:', iframe.className || iframe.id || 'unnamed');
               foundAds.push({ container: iframe.parentElement, iframe, type: 'AdNetwork' });
             }
           });
@@ -300,13 +270,11 @@ class WorkerAdExtractor {
           // PATTERN 3: Sponsored content containers
           document.querySelectorAll('[class*="sponsor" i], [class*="promoted" i], [class*="ad-" i], [class*="advertisement" i], [data-ad], [data-sponsor], [data-promoted]').forEach(container => {
             if (!foundAds.find(ad => ad.container === container)) {
-              console.log('Found sponsored container:', container.className || container.id || container.tagName);
               foundAds.push({ container, iframe: null, type: 'Sponsored' });
             }
           });
         }
 
-        console.log(`Total potential ads found: ${foundAds.length}`);
 
         // Extract data from all found ads
         const extractedAds = [];
@@ -478,14 +446,13 @@ class WorkerAdExtractor {
           );
 
           if (hasValidContent && !containsPageElements) {
-            console.log(`✅ Valid ad: ${adData.advertiser} - ${adData.headline?.substring(0, 50)}`);
             extractedAds.push(adData);
-          } else {
-            console.log(`❌ Filtered invalid ad: ${adData.containerId} - ${adData.headline?.substring(0, 50)}`);
           }
         });
 
-        console.log(`Extracted ${extractedAds.length} ads with content`);
+        if (extractedAds.length > 0) {
+          console.log(`✅ Extracted ${extractedAds.length} valid ads`);
+        }
         return extractedAds;
       }, extractionMode);
 
@@ -779,35 +746,23 @@ class WorkerAdExtractor {
     logger.info(`⏳ Waiting for content to load...`);
     await new Promise(resolve => setTimeout(resolve, 5000));
 
-    // Debug: Check page structure for desktop mode
+    // Basic page check for production
     try {
       const pageInfo = await this.page.evaluate(() => {
-        const allDivs = document.querySelectorAll('div');
-        const allSections = document.querySelectorAll('section');
-        const allIframes = document.querySelectorAll('iframe');
         const forYouByClass = document.querySelectorAll('[class*="ForYou"], [class*="for-you"], [class*="foryou"]');
         const forYouById = document.querySelectorAll('[id*="ForYou"], [id*="for-you"], [id*="foryou"]');
+        const totalIframes = document.querySelectorAll('iframe').length;
 
         return {
-          totalDivs: allDivs.length,
-          totalSections: allSections.length,
-          totalIframes: allIframes.length,
+          totalIframes,
           forYouByClass: forYouByClass.length,
-          forYouById: forYouById.length,
-          sampleClasses: Array.from(allDivs).slice(0, 20).map(div => div.className).filter(c => c).slice(0, 10),
-          sampleIds: Array.from(allDivs).slice(0, 20).map(div => div.id).filter(id => id).slice(0, 10),
-          iframeSrcs: Array.from(allIframes).slice(0, 5).map(iframe => iframe.src?.substring(0, 80) || 'no src')
+          forYouById: forYouById.length
         };
       });
 
-      logger.info(`📊 Page analysis (${workerData.deviceMode} mode):`);
-      logger.info(`  Total elements: ${pageInfo.totalDivs} divs, ${pageInfo.totalSections} sections, ${pageInfo.totalIframes} iframes`);
-      logger.info(`  ForYou elements: ${pageInfo.forYouByClass} by class, ${pageInfo.forYouById} by ID`);
-      logger.info(`  Sample classes: ${pageInfo.sampleClasses.join(', ')}`);
-      logger.info(`  Sample IDs: ${pageInfo.sampleIds.join(', ')}`);
-      logger.info(`  Sample iframe sources: ${pageInfo.iframeSrcs.join(', ')}`);
+      logger.info(`📊 Page ready: ${pageInfo.totalIframes} iframes, ${pageInfo.forYouByClass + pageInfo.forYouById} ForYou containers`);
     } catch (debugError) {
-      logger.warn(`Failed to analyze page: ${debugError.message}`);
+      logger.warn(`Page check failed: ${debugError.message}`);
     }
   }
 
@@ -817,7 +772,16 @@ class WorkerAdExtractor {
       const DatabaseSyncService = require('../database/syncService');
       const dbSync = new DatabaseSyncService();
 
+      // Force initialization with better error handling
       await dbSync.initialize();
+
+      // Verify tables exist before saving
+      const testResult = await dbSync.db.db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='ads'");
+      if (!testResult) {
+        logger.warn('Ads table does not exist, reinitializing database schema...');
+        await dbSync.db.initializeSchema();
+      }
+
       await dbSync.syncAds(newAds, this.sessionTimestamp);
 
       this.totalDbAds += newAds.length;
@@ -825,7 +789,7 @@ class WorkerAdExtractor {
 
       await dbSync.close();
     } catch (error) {
-      logger.warn(`Failed to save to database: ${error.message}`);
+      logger.warn(`Database save failed: ${error.message}`);
       // Continue without DB - don't crash extraction
     }
   }

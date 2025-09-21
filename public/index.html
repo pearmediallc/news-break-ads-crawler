@@ -349,7 +349,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🎯 NewsBreak Ads Crawler Control Panel <span id="realtimeIndicator" class="realtime-status" style="display: none;" title="Real-time updates connected"></span></h1>
+            <h1>🎯 NewsBreak Ads Crawler Control Panel <span style="font-size: 0.6em; color: #666; font-weight: normal;">v1.3</span> <span id="realtimeIndicator" class="realtime-status" style="display: none;" title="Real-time updates connected"></span></h1>
             <p>Extract and manage advertisements from NewsBreak pages</p>
         </div>
 
@@ -576,36 +576,11 @@
                     // Show extraction window for the first active extraction
                     const activeExtraction = data.activeExtractions[0];
 
-                    if (activeExtraction.status === 'resumable') {
-                        // Show resume option for resumable extractions
-                        showResumableExtraction(activeExtraction);
-                    } else if (['running', 'starting'].includes(activeExtraction.status)) {
-                        showAlert('info', `🔄 Reconnected to active extraction: ${activeExtraction.id}`);
+                    // Use the proper showExtractionWindow function to ensure all UI elements are shown
+                    showExtractionWindow(activeExtraction);
 
-                        // Update UI to show active extraction
-                        updateExtractionStatus({
-                            status: activeExtraction.status,
-                            progress: activeExtraction.progress,
-                            totalAds: activeExtraction.totalAds,
-                            logs: activeExtraction.logs
-                        });
-
-                        // Show stop button for running extractions
-                        const stopBtn = document.getElementById('stopBtn');
-                        if (stopBtn) {
-                            stopBtn.style.display = 'inline-block';
-                            stopBtn.disabled = false;
-                        }
-
-                        // Store extraction ID
-                        window.currentExtractionId = activeExtraction.id;
-                    }
-
-                    // Show extraction window if hidden
-                    const extractionWindow = document.getElementById('extractionWindow');
-                    if (extractionWindow) {
-                        extractionWindow.style.display = 'block';
-                    }
+                    // Show success message
+                    showAlert('info', `🔄 Reconnected to active extraction: ${activeExtraction.id}`);
                 }
             } catch (error) {
                 console.error('Failed to check active extractions:', error);
@@ -641,25 +616,51 @@
         }
 
         function showExtractionWindow(extraction) {
-            // Show extraction window
-            const extractionWindow = document.getElementById('extractionWindow');
-            if (extractionWindow) {
-                extractionWindow.style.display = 'block';
+            console.log('🔄 Showing extraction window for:', extraction);
+
+            // Show status panel (the correct element for our UI)
+            const statusPanel = document.getElementById('statusPanel');
+            const statusBadge = document.getElementById('statusBadge');
+            const stopBtn = document.getElementById('stopBtn');
+            const logsContainer = document.getElementById('logsContainer');
+
+            if (statusPanel) {
+                statusPanel.classList.remove('hidden');
             }
 
-            // Update status display
-            updateExtractionStatus({
-                status: extraction.status,
-                progress: extraction.progress,
-                totalAds: extraction.totalAds,
-                logs: extraction.logs || []
-            });
+            if (statusBadge) {
+                statusBadge.textContent = extraction.status === 'resumable' ? 'Resumable' : 'Running';
+                statusBadge.className = 'status-badge';
+                statusBadge.style.backgroundColor = extraction.status === 'resumable' ? '#17a2b8' : '#28a745';
+            }
 
-            // Show stop button
-            const stopBtn = document.getElementById('stopBtn');
-            if (stopBtn) {
-                stopBtn.style.display = 'inline-block';
-                stopBtn.disabled = false;
+            // Handle different extraction states
+            if (extraction.status === 'resumable') {
+                showResumableExtraction(extraction);
+            } else if (['running', 'starting'].includes(extraction.status)) {
+                // Show stop button for running extractions
+                if (stopBtn) {
+                    stopBtn.style.display = 'inline-block';
+                    stopBtn.disabled = false;
+                }
+
+                if (logsContainer) {
+                    logsContainer.innerHTML = '<div>🔴 Extraction is running - connecting to live logs...</div>';
+                }
+
+                // Store extraction ID for stop functionality
+                window.currentExtractionId = extraction.id;
+
+                // Start monitoring for real-time updates
+                startStatusMonitoring();
+
+                // Update status display
+                updateExtractionStatus({
+                    status: extraction.status,
+                    progress: extraction.progress,
+                    totalAds: extraction.totalAds,
+                    logs: extraction.logs || []
+                });
             }
 
             // Hide start button
@@ -667,9 +668,6 @@
             if (startBtn) {
                 startBtn.style.display = 'none';
             }
-
-            // Store extraction ID for stop functionality
-            window.currentExtractionId = extraction.id;
         }
 
         function handleRealTimeUpdate(data) {
@@ -1110,6 +1108,9 @@
                 await loadAds('');
                 updateSessionInfo();
                 updateSessionFilterInfo(); // Update filter info when session changes
+
+                // IMPORTANT: Check for active extractions when loading current session
+                await checkActiveExtractions();
             }
         }
 

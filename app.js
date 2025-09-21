@@ -188,18 +188,6 @@ app.get('/api/extract/status/:id', async (req, res) => {
     }
 });
 
-// Get all active extractions
-app.get('/api/extract/active', async (req, res) => {
-    try {
-        const activeExtractions = await backgroundExtractor.getActiveExtractions();
-        res.json({
-            count: activeExtractions.length,
-            extractions: activeExtractions
-        });
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to get active extractions', details: error.message });
-    }
-});
 
 // API endpoint to get ads from current or specific session with time filtering
 app.get('/api/ads', async (req, res) => {
@@ -536,9 +524,25 @@ app.get('/api/health', (req, res) => {
 app.get('/api/extract/active', async (req, res) => {
     try {
         const activeExtractions = await backgroundExtractor.getActiveExtractions();
+        console.log('📡 Active extractions requested:', activeExtractions.length);
+
         res.json({
             success: true,
-            activeExtractions: activeExtractions
+            activeExtractions: activeExtractions.map(extraction => ({
+                id: extraction.id,
+                sessionId: extraction.sessionId,
+                sessionFile: extraction.sessionFile,
+                status: extraction.status,
+                url: extraction.url,
+                deviceMode: extraction.deviceMode,
+                extractionMode: extraction.extractionMode,
+                totalAds: extraction.totalAds || 0,
+                startTime: extraction.startTime,
+                logs: extraction.logs || [],
+                progress: extraction.progress || 0,
+                canResume: extraction.canResume || false,
+                resumeData: extraction.resumeData || null
+            }))
         });
     } catch (error) {
         console.error('Failed to get active extractions:', error);
