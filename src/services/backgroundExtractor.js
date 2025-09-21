@@ -9,6 +9,7 @@ class BackgroundExtractionService {
     this.activeExtractions = new Map();
     this.dbSync = new DatabaseSyncService();
     this.statusFile = path.join(process.cwd(), 'data', 'extraction_status.json');
+    this.sessionsDir = path.join(process.cwd(), 'data', 'sessions');
   }
 
   async initialize() {
@@ -177,9 +178,86 @@ class BackgroundExtractionService {
 
   async getActiveExtractions() {
     const activeExtractions = Array.from(this.activeExtractions.values())
-      .filter(extraction => ['running', 'starting'].includes(extraction.status));
+      .filter(extraction => ['running', 'starting', 'resumable'].includes(extraction.status));
 
     return activeExtractions;
+  }
+
+  async resumeExtraction(extractionId) {
+    const extraction = this.activeExtractions.get(extractionId);
+    if (!extraction) {
+      throw new Error(`Extraction not found: ${extractionId}`);
+    }
+
+    if (extraction.status !== 'resumable') {
+      throw new Error(`Extraction ${extractionId} is not resumable (status: ${extraction.status})`);
+    }
+
+    try {
+      logger.info(`🔄 Resuming extraction: ${extractionId}`);
+
+      // Update extraction status
+      extraction.status = 'starting';
+      extraction.notes = 'Resuming from previous session';
+      extraction.resumedAt = new Date().toISOString();
+
+      // Create new worker for the resumed extraction
+      const worker = new Worker(path.join(__dirname, 'extractionWorker.js'), {
+        workerData: {
+          url: extraction.url,
+          duration: extraction.extractionMode === 'unlimited' ? 0 : extraction.duration,
+          deviceMode: extraction.deviceMode,
+          extractionId: extractionId,
+          extractionMode: extraction.extractionMode,
+          resumeFrom: extraction.sessionFile // Tell worker to resume from existing session
+        }
+      });
+
+      extraction.worker = worker;
+      extraction.status = 'running';
+      extraction.pid = worker.threadId;
+
+      // Handle worker messages
+      worker.on('message', async (message) => {
+        await this.handleWorkerMessage(extractionId, message);
+      });
+
+      // Handle worker error
+      worker.on('error', async (error) => {
+        logger.error(`Worker error for resumed extraction ${extractionId}:`, error);
+        extraction.status = 'error';
+        extraction.error = error.message;
+        await this.persistExtractionStatus();
+      });
+
+      // Handle worker exit
+      worker.on('exit', async (code) => {
+        if (code !== 0) {
+          logger.error(`Resumed worker stopped with exit code ${code}`);
+          extraction.status = 'stopped';
+        } else {
+          extraction.status = 'completed';
+        }
+        extraction.endTime = new Date().toISOString();
+        await this.persistExtractionStatus();
+      });
+
+      await this.persistExtractionStatus();
+
+      logger.info(`✅ Resumed extraction: ${extractionId}`);
+      return {
+        extractionId,
+        status: 'resumed',
+        config: extraction
+      };
+
+    } catch (error) {
+      logger.error('Failed to resume extraction:', error);
+      extraction.status = 'error';
+      extraction.error = error.message;
+      await this.persistExtractionStatus();
+      throw error;
+    }
   }
 
   async handleWorkerMessage(extractionId, message) {
@@ -294,11 +372,48 @@ class BackgroundExtractionService {
         const statusData = await fs.readJson(this.statusFile);
 
         for (const [id, extraction] of Object.entries(statusData.extractions || {})) {
-          // Only load extractions that were running
+          // Check if this extraction was running when server stopped
           if (['running', 'starting'].includes(extraction.status)) {
-            extraction.status = 'stopped'; // Mark as stopped since process was restarted
-            extraction.endTime = new Date().toISOString();
-            extraction.notes = 'Stopped due to server restart';
+            // Check if the session file still exists and has been recently updated
+            const sessionFile = extraction.sessionFile;
+            if (sessionFile) {
+              const sessionPath = path.join(this.sessionsDir, sessionFile);
+              try {
+                const sessionStats = await fs.stat(sessionPath);
+                const now = new Date();
+                const sessionModified = new Date(sessionStats.mtime);
+                const timeDiff = now - sessionModified;
+
+                // For unlimited mode, use longer window (15 minutes)
+                const maxIdleTime = extraction.extractionMode === 'unlimited' ? 15 * 60 * 1000 : 5 * 60 * 1000;
+
+                if (timeDiff < maxIdleTime) {
+                  // Mark as resumable instead of running
+                  extraction.status = 'resumable';
+                  extraction.notes = 'Available for resumption - browser closed but session preserved';
+                  extraction.canResume = true;
+                  extraction.resumeData = {
+                    lastActivity: sessionStats.mtime,
+                    idleTime: timeDiff
+                  };
+                  logger.info(`🔄 Found resumable extraction: ${id} (idle for ${Math.round(timeDiff/1000)}s)`);
+                } else {
+                  extraction.status = 'stopped';
+                  extraction.endTime = new Date().toISOString();
+                  extraction.notes = 'Stopped due to inactivity';
+                }
+              } catch (error) {
+                // Session file doesn't exist or can't read it
+                extraction.status = 'stopped';
+                extraction.endTime = new Date().toISOString();
+                extraction.notes = 'Session file missing';
+                logger.warn(`Session file missing for extraction ${id}: ${error.message}`);
+              }
+            } else {
+              extraction.status = 'stopped';
+              extraction.endTime = new Date().toISOString();
+              extraction.notes = 'No session file found';
+            }
           }
 
           this.activeExtractions.set(id, extraction);

@@ -193,16 +193,16 @@ class ForYouAdExtractor {
         logger.info('⏳ Waiting for ForYou containers to load...');
         await new Promise(resolve => setTimeout(resolve, 2000));
 
-        // Check what's on the page
+        // Check what's on the page using enhanced selectors
         const pageInfo = await this.page.evaluate(() => {
-            const forYouContainers = document.querySelectorAll('[id^="ForYou"]');
+            const forYouContainers = document.querySelectorAll('[id^="ForYou"], [id*="ForYou" i], [id*="foryou" i], [id*="for-you" i], [class*="ForYou"], [class*="for-you"], [class*="foryou" i], div[class*="ForYou"], div[class*="for-you"], section[class*="ForYou"], section[class*="for-you"]');
             const iframes = document.querySelectorAll('iframe');
             const sponsoredElements = document.querySelectorAll('[class*="sponsor"], [class*="promoted"], [class*="ad-"]');
             return {
                 forYouCount: forYouContainers.length,
                 iframeCount: iframes.length,
                 sponsoredCount: sponsoredElements.length,
-                forYouIds: Array.from(forYouContainers).slice(0, 5).map(el => el.id)
+                forYouIds: Array.from(forYouContainers).slice(0, 5).map(el => el.id || el.className)
             };
         });
 
@@ -520,8 +520,8 @@ class ForYouAdExtractor {
             const foundAds = [];
 
             // Look for multiple possible ad container patterns
-            // Pattern 1: ForYou containers (with or without hyphen)
-            document.querySelectorAll('[id^="ForYou"], [id*="foryou" i], [id*="for-you" i]').forEach(container => {
+            // Pattern 1: ForYou containers - Enhanced selectors for better detection
+            document.querySelectorAll('[id^="ForYou"], [id*="ForYou" i], [id*="foryou" i], [id*="for-you" i], [class*="ForYou"], [class*="for-you"], [class*="foryou" i], div[class*="ForYou"], div[class*="for-you"], section[class*="ForYou"], section[class*="for-you"]').forEach(container => {
                 console.log('Found ForYou container:', container.id);
                 const iframe = container.querySelector('iframe');
                 if (iframe) {

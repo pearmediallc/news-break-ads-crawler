@@ -86,6 +86,38 @@ app.post('/api/extract/start', async (req, res) => {
     }
 });
 
+// API endpoint to resume extraction
+app.post('/api/extract/resume/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await backgroundExtractor.resumeExtraction(id);
+
+        // Update active extractions map
+        activeExtractions.set(id, {
+            backgroundExtraction: true,
+            startTime: new Date(),
+            url: result.config.url,
+            duration: result.config.duration,
+            deviceMode: result.config.deviceMode,
+            extractionMode: result.config.extractionMode,
+            status: 'running',
+            logs: [],
+            resumed: true
+        });
+
+        res.json({
+            message: 'Extraction resumed successfully',
+            extractionId: id,
+            config: result.config
+        });
+    } catch (error) {
+        res.status(500).json({
+            error: 'Failed to resume extraction',
+            details: error.message
+        });
+    }
+});
+
 // API endpoint to stop extraction
 app.post('/api/extract/stop/:id', async (req, res) => {
     try {
@@ -570,15 +602,23 @@ app.get('/api/events', (req, res) => {
 function broadcastUpdate(data) {
   const message = `data: ${JSON.stringify(data)}\n\n`;
 
+  console.log(`📡 Broadcasting to ${sseConnections.size} clients:`, data.type);
+
   // Send to all connected clients
   sseConnections.forEach(connection => {
     try {
       connection.write(message);
     } catch (error) {
+      console.warn('Failed to send SSE message, removing dead connection:', error.message);
       // Remove dead connections
       sseConnections.delete(connection);
     }
   });
+
+  // Log if no connections available
+  if (sseConnections.size === 0) {
+    console.warn('⚠️ No SSE connections available for broadcast');
+  }
 }
 
 // Initialize background extractor service
@@ -600,7 +640,9 @@ function broadcastUpdate(data) {
               extractionId: extractionId,
               newAds: message.data.newAds || [],
               totalAds: message.data.totalAds || 0,
+              totalDbAds: message.data.totalDbAds || 0,
               latestAds: message.data.latestAds || [],
+              databaseSaved: message.data.databaseSaved || false,
               timestamp: new Date().toISOString()
             });
           }

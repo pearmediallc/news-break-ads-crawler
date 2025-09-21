@@ -575,15 +575,31 @@
 
                     // Show extraction window for the first active extraction
                     const activeExtraction = data.activeExtractions[0];
-                    showAlert('info', `🔄 Reconnected to active extraction: ${activeExtraction.id}`);
 
-                    // Update UI to show active extraction
-                    updateExtractionStatus({
-                        status: activeExtraction.status,
-                        progress: activeExtraction.progress,
-                        totalAds: activeExtraction.totalAds,
-                        logs: activeExtraction.logs
-                    });
+                    if (activeExtraction.status === 'resumable') {
+                        // Show resume option for resumable extractions
+                        showResumableExtraction(activeExtraction);
+                    } else if (['running', 'starting'].includes(activeExtraction.status)) {
+                        showAlert('info', `🔄 Reconnected to active extraction: ${activeExtraction.id}`);
+
+                        // Update UI to show active extraction
+                        updateExtractionStatus({
+                            status: activeExtraction.status,
+                            progress: activeExtraction.progress,
+                            totalAds: activeExtraction.totalAds,
+                            logs: activeExtraction.logs
+                        });
+
+                        // Show stop button for running extractions
+                        const stopBtn = document.getElementById('stopBtn');
+                        if (stopBtn) {
+                            stopBtn.style.display = 'inline-block';
+                            stopBtn.disabled = false;
+                        }
+
+                        // Store extraction ID
+                        window.currentExtractionId = activeExtraction.id;
+                    }
 
                     // Show extraction window if hidden
                     const extractionWindow = document.getElementById('extractionWindow');
@@ -1751,6 +1767,98 @@
             // Restart with appropriate interval
             startAutoRefresh();
         }, 10000); // Check if we need to change refresh rate every 10 seconds
+
+        // Functions for resumable extractions
+        function showResumableExtraction(extraction) {
+            // Show status panel with resume option
+            const statusPanel = document.getElementById('statusPanel');
+            const logsContainer = document.getElementById('logsContainer');
+            const statusBadge = document.getElementById('statusBadge');
+            const stopBtn = document.getElementById('stopBtn');
+
+            statusPanel.classList.remove('hidden');
+            statusBadge.textContent = 'Resumable';
+            statusBadge.className = 'status-badge';
+            statusBadge.style.backgroundColor = '#17a2b8';
+
+            // Calculate idle time
+            const idleMinutes = Math.round((extraction.resumeData?.idleTime || 0) / 60000);
+
+            logsContainer.innerHTML = `
+                <div style="padding: 20px; text-align: center; background: #f8f9fa; border-radius: 8px;">
+                    <h4 style="color: #0066cc; margin-bottom: 15px;">🔄 Extraction Available for Resume</h4>
+                    <p style="margin-bottom: 15px; color: #666;">
+                        Previous extraction was stopped ${idleMinutes} minutes ago but session is preserved.
+                    </p>
+                    <div style="margin-bottom: 15px; font-size: 14px; color: #888;">
+                        <strong>URL:</strong> ${extraction.url}<br>
+                        <strong>Mode:</strong> ${extraction.extractionMode} (${extraction.deviceMode})<br>
+                        <strong>Session:</strong> ${extraction.sessionFile || 'N/A'}
+                    </div>
+                    <button onclick="resumeExtraction('${extraction.id}')" class="btn btn-success" style="margin-right: 10px;">
+                        ▶️ Resume Extraction
+                    </button>
+                    <button onclick="startNewExtraction()" class="btn btn-primary">
+                        🆕 Start New Instead
+                    </button>
+                </div>
+            `;
+
+            // Hide stop button, show as resumable
+            stopBtn.style.display = 'none';
+
+            // Store extraction ID for resume
+            window.resumableExtractionId = extraction.id;
+        }
+
+        async function resumeExtraction(extractionId) {
+            try {
+                showAlert('info', 'Resuming extraction...');
+
+                const response = await fetch(`/api/extract/resume/${extractionId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showAlert('success', 'Extraction resumed successfully!');
+
+                    // Update UI for running extraction
+                    const statusBadge = document.getElementById('statusBadge');
+                    const stopBtn = document.getElementById('stopBtn');
+                    const logsContainer = document.getElementById('logsContainer');
+
+                    statusBadge.textContent = 'Running';
+                    statusBadge.className = 'status-badge';
+                    statusBadge.style.backgroundColor = '#28a745';
+
+                    stopBtn.style.display = 'inline-block';
+                    stopBtn.disabled = false;
+
+                    logsContainer.innerHTML = '<div>Extraction resumed, waiting for updates...</div>';
+
+                    // Start monitoring
+                    window.currentExtractionId = extractionId;
+                    startStatusMonitoring();
+
+                } else {
+                    showAlert('error', `Failed to resume: ${data.details || data.error}`);
+                }
+            } catch (error) {
+                showAlert('error', `Resume failed: ${error.message}`);
+            }
+        }
+
+        function startNewExtraction() {
+            // Hide status panel and allow new extraction
+            document.getElementById('statusPanel').classList.add('hidden');
+            window.resumableExtractionId = null;
+            showAlert('info', 'Ready to start new extraction');
+        }
     </script>
 </body>
 </html>

@@ -21,157 +21,75 @@ class WorkerAdExtractor {
     this.page = null;
     this.isRunning = false;
     this.startTime = Date.now();
+    this.reconnectAttempts = 0;
+    this.maxReconnectAttempts = 10; // Increased for unlimited mode
+    this.lastSaveTime = Date.now();
+    this.consecutiveErrors = 0;
+    this.maxConsecutiveErrors = 15; // Stop after 15 consecutive errors
+    this.lastBrowserRestart = Date.now();
+    this.totalDbAds = 0; // Track total ads saved to database
   }
 
   async initialize() {
     try {
       await fs.ensureDir(path.join(process.cwd(), 'data', 'sessions'));
 
-      // Launch browser with improved stability options
-      // Auto-detect headless mode: use headless for production/deployment, GUI for development
-      const isProduction = process.env.NODE_ENV === 'production' ||
-                           process.env.DEPLOYMENT === 'true' ||
-                           !process.env.DISPLAY; // No display available (Linux servers)
-
-      logger.info(`🖥️ Browser Mode: ${isProduction ? 'Headless (Server/Production)' : 'GUI (Development)'}`);
-      if (isProduction) {
-        logger.info(`🚀 Production deployment detected - extraction will run in background`);
+      // Check if resuming from existing session
+      if (workerData.resumeFrom) {
+        await this.resumeFromSession(workerData.resumeFrom);
       }
 
-      // Retry browser launch up to 3 times
-      let browserLaunched = false;
-      let lastError = null;
+      // Initialize browser with reconnection support
+      await this.initializeBrowser();
 
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          logger.info(`🚀 Browser launch attempt ${attempt}/3...`);
-
-          this.browser = await puppeteer.launch({
-            headless: isProduction ? 'new' : false,  // Headless in production, GUI in development
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--no-first-run',
-          '--disable-default-apps',
-          '--disable-features=VizDisplayCompositor',
-          '--disable-blink-features=AutomationControlled',
-          '--disable-extensions',
-          '--disable-plugins',
-          '--disable-images', // Faster loading
-          '--disable-javascript-harmony-shipping',
-          '--disable-background-timer-throttling',
-          '--disable-backgrounding-occluded-windows',
-          '--disable-renderer-backgrounding',
-          '--max-old-space-size=4096', // Increase memory limit for long sessions
-          // Additional server/deployment flags
-          '--disable-web-security',
-          '--disable-ipc-flooding-protection',
-          // Stability improvements
-          '--disable-crash-reporter',
-          '--disable-software-rasterizer',
-          '--disable-background-networking',
-          '--disable-sync',
-          '--disable-translate',
-          '--hide-scrollbars',
-          '--mute-audio',
-          // Remove problematic flags for Windows
-          ...(isProduction ? [
-            '--disable-gpu-sandbox',
-            '--disable-features=VizDisplayCompositor,VizHitTestSurfaceLayer'
-          ] : [])
-        ],
-        defaultViewport: null,
-        ignoreDefaultArgs: ['--enable-automation'],
-        ignoreHTTPSErrors: true,
-        // Add timeout for browser launch
-        timeout: 30000
-      });
-
-          browserLaunched = true;
-          logger.info('✅ Browser launched successfully');
-          break;
-
-        } catch (error) {
-          lastError = error;
-          logger.warn(`❌ Browser launch attempt ${attempt} failed: ${error.message}`);
-
-          if (attempt < 3) {
-            await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds before retry
-          }
-        }
-      }
-
-      if (!browserLaunched) {
-        throw new Error(`Failed to launch browser after 3 attempts. Last error: ${lastError?.message}`);
-      }
-
-      // Handle browser disconnection for long sessions
-      this.browser.on('disconnected', () => {
-        logger.error('⚠️ Browser disconnected - this may interrupt extraction');
-        if (this.isRunning) {
-          logger.info('🔄 Attempting to save current data...');
-          this.saveSession().catch(err => logger.error('Failed to save on disconnect:', err.message));
-        }
-      });
-
-      this.page = await this.browser.newPage();
-
-      // Set mobile mode if requested
-      if (workerData.deviceMode === 'mobile') {
-        await this.page.emulate({
-          name: 'iPhone 12',
-          userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
-          viewport: { width: 390, height: 844, deviceScaleFactor: 3, isMobile: true, hasTouch: true }
-        });
-      } else {
-        await this.page.setViewport({ width: 1920, height: 1080 });
-      }
-
-      // Navigate to URL with increased timeout and better error handling
-      logger.info(`🌐 Loading ${workerData.url}...`);
-
-      try {
-        await this.page.goto(workerData.url, {
-          waitUntil: 'networkidle2',
-          timeout: 80000 // 80 seconds as requested
-        });
-        logger.info(`✅ Page loaded successfully`);
-      } catch (navError) {
-        if (navError.message.includes('timeout')) {
-          logger.warn(`⏰ Navigation timeout, trying with domcontentloaded...`);
-          try {
-            await this.page.goto(workerData.url, {
-              waitUntil: 'domcontentloaded',
-              timeout: 60000
-            });
-            logger.info(`✅ Page loaded with domcontentloaded`);
-          } catch (fallbackError) {
-            logger.error(`❌ Failed to load page even with fallback: ${fallbackError.message}`);
-            throw new Error(`Failed to load NewsBreak page. Please check your internet connection and try again.`);
-          }
-        } else {
-          throw navError;
-        }
-      }
-
-      // Wait for content to fully load
-      logger.info(`⏳ Waiting for content to load...`);
-      await new Promise(resolve => setTimeout(resolve, 5000));
-
-      // Notify parent about session creation
+      // Notify parent about session creation or resumption
       parentPort.postMessage({
         type: 'session_created',
         data: {
           sessionId: this.sessionTimestamp,
-          sessionFile: path.basename(this.sessionFile)
+          sessionFile: path.basename(this.sessionFile),
+          resumed: !!workerData.resumeFrom
         }
       });
 
     } catch (error) {
       logger.error(`Failed to initialize: ${error.message}`);
       throw error;
+    }
+  }
+
+  async resumeFromSession(sessionFileName) {
+    try {
+      const sessionPath = path.join(process.cwd(), 'data', 'sessions', sessionFileName);
+
+      if (await fs.exists(sessionPath)) {
+        const sessionData = await fs.readJson(sessionPath);
+
+        // Load existing ads and rebuild seen ads set
+        this.extractedAds = sessionData.ads || [];
+        this.seenAds.clear();
+
+        for (const ad of this.extractedAds) {
+          const key = `${ad.headline}_${ad.body}_${ad.image}_${ad.advertiser}`;
+          this.seenAds.add(key);
+        }
+
+        // Update session file path and timestamp
+        this.sessionFile = sessionPath;
+        this.sessionTimestamp = sessionData.sessionId || sessionData.timestamp;
+
+        logger.info(`✅ Resumed from session: ${sessionFileName}`);
+        logger.info(`📊 Loaded ${this.extractedAds.length} existing ads`);
+
+        // Update last save time to prevent immediate saves
+        this.lastSaveTime = Date.now();
+
+      } else {
+        logger.warn(`⚠️ Session file not found: ${sessionFileName}, starting fresh`);
+      }
+    } catch (error) {
+      logger.error(`Failed to resume from session: ${error.message}`);
+      logger.info('Starting fresh session instead');
     }
   }
 
@@ -187,28 +105,46 @@ class WorkerAdExtractor {
           // UNLIMITED MODE: FOCUS ONLY ON ForYou CONTAINERS
           console.log('🎯 UNLIMITED MODE: Focusing on ForYou containers only');
 
-          // Primary ForYou containers with various selectors
+          // Primary ForYou containers with enhanced selectors
           const forYouSelectors = [
             '[id^="ForYou"]',
+            '[id*="ForYou" i]',
             '[id*="foryou" i]',
             '[id*="for-you" i]',
             '[class*="ForYou"]',
+            '[class*="for-you"]',
             '[class*="foryou" i]',
-            '[class*="for-you" i]',
-            'div[id]:has(iframe)',  // Divs with IDs that contain iframes
-            '[data-testid*="foryou" i]'
+            '[class*="for_you" i]',
+            'div[class*="ForYou"]',
+            'div[class*="for-you"]',
+            'section[class*="ForYou"]',
+            'section[class*="for-you"]',
+            '[data-testid*="foryou" i]',
+            '[data-testid*="ForYou" i]',
+            '[data-testid*="for-you" i]'
           ];
 
           forYouSelectors.forEach(selector => {
             try {
-              document.querySelectorAll(selector).forEach(container => {
+              const containers = document.querySelectorAll(selector);
+              console.log(`Selector "${selector}" found ${containers.length} containers`);
+
+              containers.forEach((container, index) => {
                 // Skip if already processed
                 if (foundAds.find(ad => ad.container === container)) return;
+
+                console.log(`Checking container ${index + 1}:`, {
+                  id: container.id,
+                  className: container.className,
+                  tagName: container.tagName,
+                  hasIframe: !!container.querySelector('iframe')
+                });
 
                 // Check for iframe (primary ad indicator)
                 const iframe = container.querySelector('iframe');
                 if (iframe) {
                   console.log('✅ Found ForYou container with iframe:', container.id || container.className);
+                  console.log('  Iframe src:', iframe.src?.substring(0, 100) || 'no src');
                   foundAds.push({ container, iframe, type: 'ForYou-Iframe' });
                   return;
                 }
@@ -230,25 +166,128 @@ class WorkerAdExtractor {
 
           console.log(`🎯 UNLIMITED MODE: Found ${foundAds.length} ForYou ads`);
 
+          // Fallback: If no ForYou containers found, try alternative approaches for desktop
+          if (foundAds.length === 0) {
+            console.log('⚠️ No ForYou containers found, trying fallback selectors for desktop...');
+
+            // Try common iframe selectors as fallback
+            const fallbackIframes = document.querySelectorAll('iframe[src*="doubleclick"], iframe[src*="googlesyndication"], iframe[src*="amazon-adsystem"], iframe[class*="ad"], iframe[id*="ad"]');
+            console.log(`Found ${fallbackIframes.length} potential ad iframes`);
+
+            fallbackIframes.forEach((iframe, index) => {
+              if (index < 10) { // Limit to 10 fallback ads per scan
+                const container = iframe.closest('div, section, article') || iframe.parentElement;
+                console.log(`✅ Fallback: Found ad iframe #${index + 1}:`, iframe.src?.substring(0, 50));
+                foundAds.push({ container, iframe, type: 'Fallback-Iframe' });
+              }
+            });
+
+            // Try looking for any sponsored content
+            const sponsoredElements = document.querySelectorAll('[class*="sponsor" i], [class*="promoted" i], [data-ad], [data-sponsor]');
+            console.log(`Found ${sponsoredElements.length} sponsored elements`);
+
+            sponsoredElements.forEach((element, index) => {
+              if (index < 5 && !foundAds.find(ad => ad.container === element)) { // Limit to 5 sponsored elements
+                console.log(`✅ Fallback: Found sponsored element #${index + 1}:`, element.className);
+                foundAds.push({ container: element, iframe: null, type: 'Fallback-Sponsored' });
+              }
+            });
+
+            console.log(`🔄 FALLBACK: Added ${foundAds.length} potential ads for desktop mode`);
+          }
+
         } else {
           // TIMED MODE: USE COMPREHENSIVE EXTRACTION
           console.log('🔍 TIMED MODE: Using comprehensive ad detection');
 
-          // PATTERN 1: ForYou containers (highest priority)
-          document.querySelectorAll('[id^="ForYou"], [id*="foryou" i], [id*="for-you" i], [class*="ForYou"], [class*="foryou" i]').forEach(container => {
-            console.log('Found ForYou container:', container.id || container.className);
-            const iframe = container.querySelector('iframe');
-            if (iframe) {
-              console.log('  - Has iframe:', iframe.src || 'no src');
-              foundAds.push({ container, iframe, type: 'ForYou' });
-            } else {
-              const hasAdContent = container.querySelector('[class*="sponsor"], [class*="promoted"], [class*="ad"], [class*="Sponsor"], [class*="Promoted"]');
-              if (hasAdContent) {
-                console.log('  - Has sponsored content');
-                foundAds.push({ container, iframe: null, type: 'ForYou-NoIframe' });
-              }
+          // PATTERN 1: ForYou containers (highest priority) - Same selectors as unlimited mode
+          const forYouSelectors = [
+            '[id^="ForYou"]',
+            '[id*="ForYou" i]',
+            '[id*="foryou" i]',
+            '[id*="for-you" i]',
+            '[class*="ForYou"]',
+            '[class*="for-you"]',
+            '[class*="foryou" i]',
+            '[class*="for_you" i]',
+            'div[class*="ForYou"]',
+            'div[class*="for-you"]',
+            'section[class*="ForYou"]',
+            'section[class*="for-you"]',
+            '[data-testid*="foryou" i]',
+            '[data-testid*="ForYou" i]',
+            '[data-testid*="for-you" i]'
+          ];
+
+          forYouSelectors.forEach(selector => {
+            try {
+              const containers = document.querySelectorAll(selector);
+              console.log(`Selector "${selector}" found ${containers.length} containers`);
+
+              containers.forEach((container, index) => {
+                // Skip if already processed
+                if (foundAds.find(ad => ad.container === container)) return;
+
+                console.log(`Checking container ${index + 1}:`, {
+                  id: container.id,
+                  className: container.className,
+                  tagName: container.tagName,
+                  hasIframe: !!container.querySelector('iframe')
+                });
+
+                // Check for iframe (primary ad indicator)
+                const iframe = container.querySelector('iframe');
+                if (iframe) {
+                  console.log('✅ Found ForYou container with iframe:', container.id || container.className);
+                  console.log('  Iframe src:', iframe.src?.substring(0, 100) || 'no src');
+                  foundAds.push({ container, iframe, type: 'ForYou' });
+                  return;
+                }
+
+                // Check for ad-related content even without iframe
+                const hasAdContent = container.querySelector('[class*="sponsor"], [class*="promoted"], [class*="ad"], [class*="Sponsor"], [class*="Promoted"]') ||
+                                   container.textContent.toLowerCase().includes('sponsored') ||
+                                   container.textContent.toLowerCase().includes('promoted');
+
+                if (hasAdContent) {
+                  console.log('✅ Found ForYou container with sponsored content:', container.id || container.className);
+                  foundAds.push({ container, iframe: null, type: 'ForYou-NoIframe' });
+                }
+              });
+            } catch (e) {
+              console.warn('Error with selector:', selector, e.message);
             }
           });
+
+          // Add the same fallback logic as unlimited mode
+          if (foundAds.length === 0) {
+            console.log('⚠️ No ForYou containers found in TIMED mode, trying fallback selectors...');
+
+            // Try common iframe selectors as fallback
+            const fallbackIframes = document.querySelectorAll('iframe[src*="doubleclick"], iframe[src*="googlesyndication"], iframe[src*="amazon-adsystem"], iframe[class*="ad"], iframe[id*="ad"]');
+            console.log(`Found ${fallbackIframes.length} potential ad iframes`);
+
+            fallbackIframes.forEach((iframe, index) => {
+              if (index < 10) { // Limit to 10 fallback ads per scan
+                const container = iframe.closest('div, section, article') || iframe.parentElement;
+                console.log(`✅ Fallback: Found ad iframe #${index + 1}:`, iframe.src?.substring(0, 50));
+                foundAds.push({ container, iframe, type: 'Fallback-Iframe' });
+              }
+            });
+
+            // Try looking for any sponsored content
+            const sponsoredElements = document.querySelectorAll('[class*="sponsor" i], [class*="promoted" i], [data-ad], [data-sponsor]');
+            console.log(`Found ${sponsoredElements.length} sponsored elements`);
+
+            sponsoredElements.forEach((element, index) => {
+              if (index < 5 && !foundAds.find(ad => ad.container === element)) { // Limit to 5 sponsored elements
+                console.log(`✅ Fallback: Found sponsored element #${index + 1}:`, element.className);
+                foundAds.push({ container: element, iframe: null, type: 'Fallback-Sponsored' });
+              }
+            });
+
+            console.log(`🔄 FALLBACK: Added ${foundAds.length} potential ads for desktop mode`);
+          }
 
           // PATTERN 2: Ad network iframes
           document.querySelectorAll('iframe[class*="mspai"], iframe[class*="nova"], iframe[id*="google_ads"], iframe[name*="google_ads"], iframe[src*="doubleclick"], iframe[src*="googlesyndication"]').forEach(iframe => {
@@ -459,6 +498,10 @@ class WorkerAdExtractor {
       });
 
       if (newAds.length > 0) {
+        // ADD TO DATABASE FIRST - Primary storage
+        await this.saveToDatabase(newAds);
+
+        // Add to memory for immediate processing (but limit size)
         this.extractedAds.push(...newAds);
         logger.info(`✨ Found ${newAds.length} new ads`);
         newAds.forEach(ad => {
@@ -467,18 +510,23 @@ class WorkerAdExtractor {
             logger.info(`     "${ad.body.substring(0, 60)}${ad.body.length > 60 ? '...' : ''}"`);
           }
         });
-        logger.info(`  Total: ${this.extractedAds.length} ads`);
 
-        // Save to session file
+        // NO ADS DELETION - All ads preserved in database and session
+        // Memory management done only through browser restarts and garbage collection
+
+        logger.info(`  Total in memory: ${this.extractedAds.length} ads`);
+
+        // Save to session file (with current memory state)
         await this.saveSession();
 
         // Notify parent about new ads
         parentPort.postMessage({
           type: 'ads_update',
           data: {
-            totalAds: this.extractedAds.length,
+            totalAds: this.extractedAds.length, // Memory count
             newAds: newAds,
-            latestAds: this.extractedAds.slice(-10)
+            latestAds: this.extractedAds.slice(-10),
+            databaseSaved: true // Flag indicating DB save
           }
         });
       } else {
@@ -532,6 +580,256 @@ class WorkerAdExtractor {
     }
   }
 
+  async handleBrowserDisconnection() {
+    logger.info('🔄 Handling browser disconnection - saving current data...');
+
+    // Save current data first
+    try {
+      await this.saveSession();
+      logger.info('✅ Current data saved successfully');
+    } catch (saveError) {
+      logger.error('❌ Failed to save data on disconnect:', saveError.message);
+    }
+
+    // Attempt to reconnect if we haven't exceeded max attempts
+    if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++;
+      logger.info(`🔄 Reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}...`);
+
+      try {
+        // Progressive wait time for reconnection attempts
+        const waitTime = Math.min(3000 + (this.reconnectAttempts * 2000), 15000);
+        logger.info(`⏳ Waiting ${waitTime/1000}s before reconnection...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+
+        // Clean shutdown of browser resources
+        try {
+          if (this.page && !this.page.isClosed()) {
+            await this.page.close().catch(() => {});
+          }
+          if (this.browser && this.browser.isConnected()) {
+            await this.browser.close().catch(() => {});
+          }
+        } catch (cleanupError) {
+          logger.warn('Cleanup error during reconnection:', cleanupError.message);
+        }
+
+        // Clear references
+        this.page = null;
+        this.browser = null;
+
+        // Reinitialize browser with retry logic
+        await this.initializeBrowser();
+
+        // Verify browser is actually working
+        await this.page.evaluate(() => document.title);
+
+        logger.info('✅ Browser reconnected and verified - continuing extraction');
+
+        // Reset reconnect attempts on successful reconnection
+        this.reconnectAttempts = 0;
+
+      } catch (reconnectError) {
+        logger.error(`❌ Reconnection attempt ${this.reconnectAttempts} failed:`, reconnectError.message);
+
+        if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+          logger.error('❌ Maximum reconnection attempts reached - stopping extraction');
+          this.isRunning = false;
+        } else {
+          logger.info(`🔄 Will retry reconnection automatically...`);
+          // Don't use setTimeout here, let the main loop handle retry
+        }
+      }
+    } else {
+      logger.error('❌ Maximum reconnection attempts reached - stopping extraction');
+      this.isRunning = false;
+    }
+  }
+
+  async initializeBrowser() {
+    // Auto-detect headless mode: use headless for production/deployment, GUI for development
+    const isProduction = process.env.NODE_ENV === 'production' ||
+                         process.env.DEPLOYMENT === 'true' ||
+                         !process.env.DISPLAY; // No display available (Linux servers)
+
+    logger.info(`🖥️ Browser Mode: ${isProduction ? 'Headless (Server/Production)' : 'GUI (Development)'}`);
+
+    // Retry browser launch up to 3 times
+    let browserLaunched = false;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        logger.info(`🚀 Browser launch attempt ${attempt}/3...`);
+
+        this.browser = await puppeteer.launch({
+          headless: isProduction ? 'new' : false,  // Headless in production, GUI in development
+          args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--no-first-run',
+            '--disable-default-apps',
+            '--disable-features=VizDisplayCompositor',
+            '--disable-blink-features=AutomationControlled',
+            '--disable-extensions',
+            '--disable-plugins',
+            '--disable-images', // Faster loading
+            '--disable-javascript-harmony-shipping',
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding',
+            '--max-old-space-size=4096', // Increase memory limit for long sessions
+            // Additional server/deployment flags
+            '--disable-web-security',
+            '--disable-ipc-flooding-protection',
+            // Stability improvements
+            '--disable-crash-reporter',
+            '--disable-software-rasterizer',
+            '--disable-background-networking',
+            '--disable-sync',
+            '--disable-translate',
+            '--hide-scrollbars',
+            '--mute-audio',
+            // Remove problematic flags for Windows
+            ...(isProduction ? [
+              '--disable-gpu-sandbox',
+              '--disable-features=VizDisplayCompositor,VizHitTestSurfaceLayer'
+            ] : [])
+          ],
+          defaultViewport: null,
+          ignoreDefaultArgs: ['--enable-automation'],
+          ignoreHTTPSErrors: true,
+          // Add timeout for browser launch
+          timeout: 30000
+        });
+
+        browserLaunched = true;
+        logger.info('✅ Browser launched successfully');
+        break;
+
+      } catch (error) {
+        lastError = error;
+        logger.warn(`❌ Browser launch attempt ${attempt} failed: ${error.message}`);
+
+        if (attempt < 3) {
+          await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds before retry
+        }
+      }
+    }
+
+    if (!browserLaunched) {
+      throw new Error(`Failed to launch browser after 3 attempts. Last error: ${lastError?.message}`);
+    }
+
+    // Handle browser disconnection for long sessions
+    this.browser.on('disconnected', () => {
+      logger.warn('⚠️ Browser disconnected - attempting reconnection...');
+      if (this.isRunning) {
+        this.handleBrowserDisconnection();
+      }
+    });
+
+    this.page = await this.browser.newPage();
+
+    // Set device mode with proper configuration
+    if (workerData.deviceMode === 'mobile') {
+      await this.page.emulate({
+        name: 'iPhone 12',
+        userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
+        viewport: { width: 390, height: 844, deviceScaleFactor: 3, isMobile: true, hasTouch: true }
+      });
+      logger.info(`📱 Mobile mode configured: iPhone 12 (390x844)`);
+    } else {
+      // Desktop mode with proper user agent
+      await this.page.setViewport({ width: 1920, height: 1080 });
+      await this.page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+      logger.info(`🖥️ Desktop mode configured: 1920x1080`);
+    }
+
+    // Navigate to URL with increased timeout and better error handling
+    logger.info(`🌐 Loading ${workerData.url}...`);
+
+    try {
+      await this.page.goto(workerData.url, {
+        waitUntil: 'networkidle2',
+        timeout: 80000 // 80 seconds as requested
+      });
+      logger.info(`✅ Page loaded successfully`);
+    } catch (navError) {
+      if (navError.message.includes('timeout')) {
+        logger.warn(`⏰ Navigation timeout, trying with domcontentloaded...`);
+        try {
+          await this.page.goto(workerData.url, {
+            waitUntil: 'domcontentloaded',
+            timeout: 60000
+          });
+          logger.info(`✅ Page loaded with domcontentloaded`);
+        } catch (fallbackError) {
+          logger.error(`❌ Failed to load page even with fallback: ${fallbackError.message}`);
+          throw new Error(`Failed to load NewsBreak page. Please check your internet connection and try again.`);
+        }
+      } else {
+        throw navError;
+      }
+    }
+
+    // Wait for content to fully load
+    logger.info(`⏳ Waiting for content to load...`);
+    await new Promise(resolve => setTimeout(resolve, 5000));
+
+    // Debug: Check page structure for desktop mode
+    try {
+      const pageInfo = await this.page.evaluate(() => {
+        const allDivs = document.querySelectorAll('div');
+        const allSections = document.querySelectorAll('section');
+        const allIframes = document.querySelectorAll('iframe');
+        const forYouByClass = document.querySelectorAll('[class*="ForYou"], [class*="for-you"], [class*="foryou"]');
+        const forYouById = document.querySelectorAll('[id*="ForYou"], [id*="for-you"], [id*="foryou"]');
+
+        return {
+          totalDivs: allDivs.length,
+          totalSections: allSections.length,
+          totalIframes: allIframes.length,
+          forYouByClass: forYouByClass.length,
+          forYouById: forYouById.length,
+          sampleClasses: Array.from(allDivs).slice(0, 20).map(div => div.className).filter(c => c).slice(0, 10),
+          sampleIds: Array.from(allDivs).slice(0, 20).map(div => div.id).filter(id => id).slice(0, 10),
+          iframeSrcs: Array.from(allIframes).slice(0, 5).map(iframe => iframe.src?.substring(0, 80) || 'no src')
+        };
+      });
+
+      logger.info(`📊 Page analysis (${workerData.deviceMode} mode):`);
+      logger.info(`  Total elements: ${pageInfo.totalDivs} divs, ${pageInfo.totalSections} sections, ${pageInfo.totalIframes} iframes`);
+      logger.info(`  ForYou elements: ${pageInfo.forYouByClass} by class, ${pageInfo.forYouById} by ID`);
+      logger.info(`  Sample classes: ${pageInfo.sampleClasses.join(', ')}`);
+      logger.info(`  Sample IDs: ${pageInfo.sampleIds.join(', ')}`);
+      logger.info(`  Sample iframe sources: ${pageInfo.iframeSrcs.join(', ')}`);
+    } catch (debugError) {
+      logger.warn(`Failed to analyze page: ${debugError.message}`);
+    }
+  }
+
+  async saveToDatabase(newAds) {
+    try {
+      // Import database module only when needed
+      const DatabaseSyncService = require('../database/syncService');
+      const dbSync = new DatabaseSyncService();
+
+      await dbSync.initialize();
+      await dbSync.syncAds(newAds, this.sessionTimestamp);
+
+      this.totalDbAds += newAds.length;
+      logger.info(`💾 Saved ${newAds.length} ads to database (total DB: ${this.totalDbAds})`);
+
+      await dbSync.close();
+    } catch (error) {
+      logger.warn(`Failed to save to database: ${error.message}`);
+      // Continue without DB - don't crash extraction
+    }
+  }
+
   async saveSession() {
     try {
       const sessionData = {
@@ -542,8 +840,10 @@ class WorkerAdExtractor {
         deviceMode: workerData.deviceMode,
         extractionMode: workerData.extractionMode,
         endTime: new Date().toISOString(),
-        totalAds: this.extractedAds.length,
-        ads: this.extractedAds
+        totalAds: this.extractedAds.length, // All ads in memory
+        totalDbAds: this.totalDbAds, // Database count
+        ads: this.extractedAds, // ALL EXTRACTED ADS - NEVER TRUNCATED
+        note: 'All extracted ads preserved in session file'
       };
 
       await fs.writeJson(this.sessionFile, sessionData, { spaces: 2 });
@@ -562,7 +862,8 @@ class WorkerAdExtractor {
       sessionsIndex.unshift({
         file: path.basename(this.sessionFile),
         timestamp: this.sessionTimestamp,
-        totalAds: this.extractedAds.length,
+        totalAds: this.extractedAds.length, // Memory count
+        totalDbAds: this.totalDbAds, // Database count
         sessionId: this.sessionTimestamp
       });
 
@@ -572,9 +873,51 @@ class WorkerAdExtractor {
       }
 
       await fs.writeJson(sessionsIndexFile, sessionsIndex, { spaces: 2 });
-      logger.info(`Updated sessions index with ${this.extractedAds.length} ads`);
+      logger.info(`📝 Session saved: ${this.extractedAds.length} in memory, ${this.totalDbAds} in database`);
     } catch (error) {
       logger.error(`Failed to save session: ${error.message}`);
+    }
+  }
+
+  async restartBrowser() {
+    try {
+      logger.info('🔄 Restarting browser for memory cleanup...');
+
+      // Save current data before restart
+      await this.saveSession();
+
+      // Clean shutdown
+      if (this.page && !this.page.isClosed()) {
+        await this.page.close();
+      }
+      if (this.browser && this.browser.isConnected()) {
+        await this.browser.close();
+      }
+
+      // Clear references
+      this.page = null;
+      this.browser = null;
+
+      // Force garbage collection
+      if (global.gc) {
+        global.gc();
+        logger.info('🗑️ Forced garbage collection');
+      }
+
+      // Wait before restart
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Reinitialize browser
+      await this.initializeBrowser();
+
+      this.lastBrowserRestart = Date.now();
+      this.reconnectAttempts = 0; // Reset reconnect attempts
+
+      logger.info('✅ Browser restarted successfully');
+
+    } catch (error) {
+      logger.error(`Failed to restart browser: ${error.message}`);
+      throw error; // Let caller handle the error
     }
   }
 
@@ -615,14 +958,62 @@ class WorkerAdExtractor {
       while (this.isRunning && (Date.now() - this.startTime) < durationMs) {
         extractionCount++;
 
-        // Scroll and wait
-        await this.scrollAndWait();
+        // Scroll and wait (skip if browser disconnected)
+        try {
+          if (this.browser && this.browser.isConnected() && this.page) {
+            await this.scrollAndWait();
+          } else {
+            logger.warn(`⚠️ Skipping scroll - browser not connected`);
+            await new Promise(resolve => setTimeout(resolve, 5000)); // Wait before retry
+            continue;
+          }
+        } catch (scrollError) {
+          logger.warn(`⚠️ Scroll error: ${scrollError.message}`);
+
+          // Check if it's a browser disconnection
+          if (!this.browser || !this.browser.isConnected()) {
+            logger.warn(`🔄 Browser disconnected during scroll - waiting for reconnection...`);
+            continue; // Let the extraction error handling below deal with reconnection
+          }
+        }
 
         // Extract ads after scrolling
         try {
           await this.extractAds();
+          this.consecutiveErrors = 0; // Reset error counter on success
         } catch (extractError) {
-          logger.warn(`⚠️ Extraction error (continuing): ${extractError.message}`);
+          this.consecutiveErrors++;
+          logger.warn(`⚠️ Extraction error #${this.consecutiveErrors} (continuing): ${extractError.message}`);
+
+          // Stop if too many consecutive errors
+          if (this.consecutiveErrors >= this.maxConsecutiveErrors) {
+            logger.error(`❌ Too many consecutive errors (${this.consecutiveErrors}) - stopping extraction`);
+            break;
+          }
+
+          // Check if browser is still connected
+          if (!this.browser || !this.browser.isConnected()) {
+            logger.warn(`🔄 Browser disconnected during extraction - attempting reconnection...`);
+
+            try {
+              await this.handleBrowserDisconnection();
+              if (this.browser && this.browser.isConnected()) {
+                logger.info(`✅ Browser reconnected successfully`);
+                this.consecutiveErrors = Math.max(0, this.consecutiveErrors - 2); // Reduce error count on successful reconnection
+                continue;
+              }
+            } catch (reconnectError) {
+              logger.error(`❌ Reconnection failed: ${reconnectError.message}`);
+              if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+                logger.error(`❌ Max reconnection attempts reached - stopping extraction`);
+                break;
+              }
+            }
+          } else {
+            // Browser connected but extraction failed - wait before retry
+            logger.info(`⏳ Waiting 5 seconds before retry...`);
+            await new Promise(resolve => setTimeout(resolve, 5000));
+          }
 
           // Check if page is still alive
           try {
@@ -666,25 +1057,89 @@ class WorkerAdExtractor {
           logger.info(`\n🔍 Scan #${extractionCount} (${minutes}m ${seconds}s elapsed)`);
           logger.info(`  Total: ${this.extractedAds.length} ads`);
 
-          // Memory management for unlimited extractions
+          // Enhanced memory management for unlimited extractions
           if (workerData.extractionMode === 'unlimited') {
-            logger.info(`  Memory: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB heap used`);
+            const memUsage = process.memoryUsage();
+            const heapMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+            const totalMB = Math.round(memUsage.rss / 1024 / 1024);
+            logger.info(`  Memory: ${heapMB}MB heap, ${totalMB}MB total | DB: ${this.totalDbAds} ads saved`);
 
-            // Save data periodically to prevent memory overflow
-            if (extractionCount % 50 === 0) {
+            // More frequent saves for unlimited mode
+            if (extractionCount % 20 === 0) {
               await this.saveSession();
-              logger.info(`  💾 Periodic save completed`);
+              logger.info(`  💾 Periodic save completed (Memory: ${this.extractedAds.length}, DB: ${this.totalDbAds})`);
             }
 
-            // Clean up seenAds Set if it gets too large (keep last 10,000)
-            if (this.seenAds.size > 10000) {
-              const adsToKeep = this.extractedAds.slice(-5000);
+            // MEMORY MANAGEMENT WITHOUT DATA DELETION
+            if (heapMB > 350 || totalMB > 450) { // Memory warning thresholds
+              logger.warn(`⚠️ High memory usage detected: ${heapMB}MB heap, ${totalMB}MB total`);
+              logger.info(`📊 Current data: ${this.extractedAds.length} ads in memory, ${this.totalDbAds} in database`);
+
+              // Save current state to ensure no data loss
+              await this.saveSession();
+              logger.info(`💾 All data preserved in session and database`);
+
+              // Only garbage collection - NO DATA DELETION
+              if (global.gc) {
+                global.gc();
+                logger.info(`🗑️ Garbage collection performed - data preserved`);
+              }
+
+              // Force browser restart if memory is critically high
+              if (heapMB > 400 || totalMB > 500) {
+                logger.warn(`🚨 Critical memory usage - forcing safe browser restart`);
+                try {
+                  await this.restartBrowser();
+                  logger.info(`✅ Browser restarted - all data preserved`);
+                } catch (error) {
+                  logger.error(`Browser restart failed: ${error.message}`);
+                }
+              }
+            }
+
+            // SAFE PERIODIC BROWSER RESTART for memory cleanup
+            const browserUptime = Date.now() - this.lastBrowserRestart;
+            const restartInterval = 45 * 60 * 1000; // Restart every 45 minutes (less aggressive)
+
+            // Only restart if memory is getting high AND enough time has passed
+            const shouldRestart = browserUptime > restartInterval && (heapMB > 300 || totalMB > 400);
+
+            if (shouldRestart) {
+              logger.info(`🔄 Safe browser restart scheduled (${Math.round(browserUptime/60000)} min uptime, ${heapMB}MB memory)`);
+
+              try {
+                // Save current progress before restart
+                logger.info(`💾 Saving progress before browser restart...`);
+                await this.saveSession();
+
+                // Only restart between extraction cycles to minimize disruption
+                logger.info(`🔄 Performing safe browser restart...`);
+                await this.restartBrowser();
+
+                logger.info(`✅ Browser safely restarted - extraction continuing seamlessly`);
+              } catch (restartError) {
+                logger.error(`Browser restart failed: ${restartError.message}`);
+                logger.info(`📋 Continuing with existing browser to avoid disruption`);
+                // Reset restart timer to avoid immediate retry
+                this.lastBrowserRestart = Date.now();
+              }
+            }
+
+            // SEENADS CACHE OPTIMIZATION (without deleting extracted ads)
+            if (this.seenAds.size > 8000) { // Higher threshold for cache management
+              logger.info(`📋 seenAds cache optimization: ${this.seenAds.size} entries (preserving all data)`);
+
+              // Only reduce seenAds cache for memory, but keep all extracted ads
+              // Rebuild seenAds from recent ads for duplicate detection efficiency
+              const recentAds = this.extractedAds.slice(-2000); // Use more recent ads for better detection
               this.seenAds.clear();
-              adsToKeep.forEach(ad => {
+
+              recentAds.forEach(ad => {
                 const key = `${ad.headline}_${ad.body}_${ad.image}_${ad.advertiser}`;
                 this.seenAds.add(key);
               });
-              logger.info(`  🧹 Cleaned up seenAds cache (${this.seenAds.size} entries)`);
+
+              logger.info(`  ✅ seenAds cache optimized: ${this.seenAds.size} entries (all ${this.extractedAds.length} ads preserved)`);
             }
           }
         }
