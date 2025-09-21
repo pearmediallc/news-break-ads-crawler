@@ -649,6 +649,7 @@
                 }
 
                 // Store extraction ID for stop functionality
+                currentExtractionId = extraction.id;
                 window.currentExtractionId = extraction.id;
 
                 // Start monitoring for real-time updates
@@ -910,6 +911,12 @@
                     showStatus('running', `Extraction started (ID: ${currentExtractionId})`);
                     document.getElementById('statusPanel').classList.remove('hidden');
                     document.getElementById('stopBtn').disabled = false;
+
+                    // Initialize logs container
+                    const logsContainer = document.getElementById('logsContainer');
+                    if (logsContainer) {
+                        logsContainer.innerHTML = '<div class="log-entry"><span style="color: #999; font-size: 0.8em;">[' + new Date().toLocaleTimeString() + ']</span> <span style="color: #0066cc;">🔴 Extraction is running - connecting to live logs...</span></div>';
+                    }
 
                     // Start monitoring status
                     startStatusMonitoring();
@@ -1888,6 +1895,7 @@
                     logsContainer.innerHTML = '<div>Extraction resumed, waiting for updates...</div>';
 
                     // Start monitoring
+                    currentExtractionId = extractionId;
                     window.currentExtractionId = extractionId;
                     startStatusMonitoring();
 
