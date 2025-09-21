@@ -645,7 +645,7 @@
                 }
 
                 if (logsContainer) {
-                    logsContainer.innerHTML = '<div>🔴 Extraction is running - connecting to live logs...</div>';
+                    logsContainer.innerHTML = '<div class="log-entry"><span style="color: #999; font-size: 0.8em;">[' + new Date().toLocaleTimeString() + ']</span> <span style="color: #0066cc;">🔴 Extraction is running - connecting to live logs...</span></div>';
                 }
 
                 // Store extraction ID for stop functionality
@@ -684,13 +684,22 @@
                         updateAdCount(data.totalAds);
                     }
 
+                    // Check if we need to display ads
+                    const adsGrid = document.getElementById('adsGrid');
+                    const hasDisplayedAds = adsGrid && adsGrid.children.length > 0 && !adsGrid.innerHTML.includes('No ads found');
+
                     // Add new ads to the display dynamically
                     if (data.newAds && data.newAds.length > 0) {
                         addNewAdsToDisplay(data.newAds);
                         showAlert('info', `🆕 ${data.newAds.length} new ads found!`);
                     } else if (data.latestAds && data.latestAds.length > 0) {
-                        // If no new ads but total count changed, refresh display
-                        loadSessionData(currentSessionFile);
+                        if (!hasDisplayedAds) {
+                            // If no ads are currently displayed, show the latest ads
+                            displayAds(data.latestAds);
+                        } else {
+                            // If ads are displayed but count changed, refresh display
+                            loadSessionData(currentSessionFile);
+                        }
                     }
 
                     // Update session info with new count
@@ -711,9 +720,45 @@
                     break;
 
                 case 'log':
-                    // Log messages from extraction worker
+                    // Log messages from extraction worker - display in UI
                     console.log(`[${data.level.toUpperCase()}] ${data.message}`);
+                    addLogToUI(data.level, data.message);
                     break;
+            }
+        }
+
+        function addLogToUI(level, message) {
+            const logsContainer = document.getElementById('logsContainer');
+            if (!logsContainer) return;
+
+            // Create log entry with timestamp
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-${level}`;
+
+            // Style based on log level
+            let color = '#333';
+            let icon = '📋';
+            switch (level) {
+                case 'info': color = '#0066cc'; icon = '💡'; break;
+                case 'warn': color = '#ff9900'; icon = '⚠️'; break;
+                case 'error': color = '#cc0000'; icon = '❌'; break;
+                case 'debug': color = '#666'; icon = '🔍'; break;
+            }
+
+            logEntry.innerHTML = `
+                <span style="color: #999; font-size: 0.8em;">[${timestamp}]</span>
+                <span style="color: ${color};">${icon} ${escapeHtml(message)}</span>
+            `;
+
+            // Add to container and scroll to bottom
+            logsContainer.appendChild(logEntry);
+            logsContainer.scrollTop = logsContainer.scrollHeight;
+
+            // Limit to last 100 log entries
+            const logEntries = logsContainer.querySelectorAll('.log-entry');
+            if (logEntries.length > 100) {
+                logEntries[0].remove();
             }
         }
 
