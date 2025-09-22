@@ -447,8 +447,8 @@
                     <button class="btn btn-success" onclick="refreshAds()">
                         🔄 Refresh
                     </button>
-                    <button class="btn btn-primary" onclick="loadAllFromDatabase()" title="Load all ads from database">
-                        🗄️ Load All DB
+                    <button class="btn btn-primary" onclick="loadAllFromDatabase()" title="Load ads from database">
+                        🗄️ Load DB
                     </button>
                     <div style="display: flex; gap: 5px; align-items: center;">
                         <label for="timeframeFilter" style="font-size: 12px; color: #666;">Time Filter:</label>
@@ -1070,11 +1070,43 @@
 
         async function loadSessions() {
             try {
-                const response = await fetch('/api/sessions/list');
-                const sessions = await response.json();
+                // Load sessions from both JSON files and database
+                const [fileResponse, dbResponse] = await Promise.all([
+                    fetch('/api/sessions/list'),
+                    fetch('/api/query/sessions').catch(() => ({ ok: false }))
+                ]);
+
+                const fileSessions = await fileResponse.json();
+                let dbSessions = [];
+                if (dbResponse.ok) {
+                    const dbData = await dbResponse.json();
+                    dbSessions = dbData.data || [];
+                }
 
                 const selector = document.getElementById('sessionSelector');
-                selector.innerHTML = '<option value="">Current Session</option>';
+                selector.innerHTML = '<option value="">All Sessions</option>';
+
+                // Add database sessions first (if available)
+                if (dbSessions.length > 0) {
+                    const dbGroup = document.createElement('optgroup');
+                    dbGroup.label = '📊 Database Sessions';
+
+                    dbSessions.forEach(session => {
+                        const option = document.createElement('option');
+                        option.value = session.session_id;
+                        option.dataset.source = 'database';
+                        const date = new Date(session.start_time).toLocaleString();
+                        const status = session.status === 'active' ? '🟢' : '';
+                        option.textContent = `${status} ${date} (${session.total_ads || 0} ads)`;
+                        dbGroup.appendChild(option);
+                    });
+
+                    selector.appendChild(dbGroup);
+                }
+
+                // Add file sessions
+                const fileGroup = document.createElement('optgroup');
+                fileGroup.label = '📁 Recent File Sessions';
 
                 // Get current session to mark it
                 const currentResponse = await fetch('/api/sessions/current');
@@ -1096,7 +1128,7 @@
                     }
                 }
 
-                sessions.forEach(session => {
+                fileSessions.forEach(session => {
                     const date = new Date(session.timestamp);
                     const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
                     const option = document.createElement('option');
@@ -1121,8 +1153,13 @@
                         option.style.fontWeight = 'bold';
                     }
 
-                    selector.appendChild(option);
+                    fileGroup.appendChild(option);
                 });
+
+                // Append file group if it has options
+                if (fileGroup.children.length > 0) {
+                    selector.appendChild(fileGroup);
+                }
             } catch (error) {
                 console.error('Failed to load sessions:', error);
             }
@@ -1367,14 +1404,24 @@
             document.getElementById('adsLoading').classList.add('active');
 
             try {
-                // Query all ads from database
+                // Check if a session is selected
+                const sessionSelector = document.getElementById('sessionSelector');
+                const selectedSession = sessionSelector ? sessionSelector.value : '';
+
+                // Build filters based on selection
+                const filters = {};
+                if (selectedSession) {
+                    filters.sessionIds = [selectedSession];
+                }
+
+                // Query ads from database
                 const response = await fetch('/api/query/ads/query', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        filters: {},
+                        filters: filters,
                         sort: { field: 'timestamp', direction: 'DESC' },
                         pagination: { limit: 5000, offset: 0 }
                     })
@@ -1408,12 +1455,14 @@
                     document.getElementById('uniqueAdvertisers').textContent = uniqueAdvertisers.size;
                     document.getElementById('adsWithLinks').textContent = adsWithLinks;
 
-                    // Clear session selector to indicate we're viewing all data
-                    document.getElementById('sessionSelector').value = '';
-
                     // Update session info to show database mode
-                    document.getElementById('currentSessionInfo').textContent =
-                        `(Database Mode: ${mappedAds.length} total ads)`;
+                    if (selectedSession) {
+                        document.getElementById('currentSessionInfo').textContent =
+                            `(Database: Session ${selectedSession} - ${mappedAds.length} ads)`;
+                    } else {
+                        document.getElementById('currentSessionInfo').textContent =
+                            `(Database: All Sessions - ${mappedAds.length} total ads)`;
+                    }
 
                     showAlert('success', `Loaded ${mappedAds.length} ads from database`);
                 } else {
@@ -1455,22 +1504,77 @@
 
         async function exportData(format) {
             try {
-                const response = await fetch(`/api/export/${format}`);
-                const blob = await response.blob();
+                // Check if we have ads to export
+                if (!adsData || adsData.length === 0) {
+                    showAlert('warning', 'No ads to export. Load a session or database first.');
+                    return;
+                }
+
+                let filename = 'newsbreak_ads';
+
+                // Get current session info
+                const sessionSelector = document.getElementById('sessionSelector');
+                if (sessionSelector && sessionSelector.value) {
+                    filename = `session_${sessionSelector.value}`;
+                }
+
+                // Add timestamp to filename
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+                filename += `_${timestamp}`;
+
+                // Create blob based on format
+                let blob;
+                if (format === 'json') {
+                    blob = new Blob([JSON.stringify(adsData, null, 2)], { type: 'application/json' });
+                } else if (format === 'csv') {
+                    const csv = convertToCSV(adsData);
+                    blob = new Blob([csv], { type: 'text/csv' });
+                }
 
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `newsbreak_ads.${format}`;
+                a.download = `${filename}.${format}`;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
                 window.URL.revokeObjectURL(url);
 
-                showAlert('success', `Exported as ${format.toUpperCase()}`);
+                showAlert('success', `Exported ${adsData.length} ads as ${format.toUpperCase()}`);
             } catch (error) {
                 showAlert('error', 'Export failed: ' + error.message);
             }
+        }
+
+        function convertToCSV(ads) {
+            if (!ads || ads.length === 0) return '';
+
+            const headers = ['Timestamp', 'Advertiser', 'Headline', 'Description', 'Link', 'Image'];
+            const rows = ads.map(ad => [
+                ad.timestamp || '',
+                ad.advertiser || ad.ad_network || '',
+                ad.headline || ad.heading || '',
+                ad.body || ad.description || '',
+                ad.link || ad.link_url || '',
+                ad.image || ad.image_url || ''
+            ]);
+
+            // Escape CSV values
+            const escapeCSV = (val) => {
+                if (val === null || val === undefined) return '';
+                const str = String(val);
+                if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+                    return `"${str.replace(/"/g, '""')}"`;
+                }
+                return str;
+            };
+
+            const csvContent = [
+                headers.join(','),
+                ...rows.map(row => row.map(escapeCSV).join(','))
+            ].join('\n');
+
+            return csvContent;
         }
 
         function exportExcel() {
@@ -1479,12 +1583,32 @@
                 return;
             }
 
-            const ws = XLSX.utils.json_to_sheet(adsData);
+            // Prepare data with proper field names
+            const excelData = adsData.map(ad => ({
+                'Timestamp': ad.timestamp || '',
+                'Advertiser': ad.advertiser || ad.ad_network || '',
+                'Headline': ad.headline || ad.heading || '',
+                'Description': ad.body || ad.description || '',
+                'Link': ad.link || ad.link_url || '',
+                'Image': ad.image || ad.image_url || ''
+            }));
+
+            const ws = XLSX.utils.json_to_sheet(excelData);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, 'Ads');
-            XLSX.writeFile(wb, 'newsbreak_ads.xlsx');
 
-            showAlert('success', 'Exported as Excel');
+            // Generate filename
+            let filename = 'newsbreak_ads';
+            const sessionSelector = document.getElementById('sessionSelector');
+            if (sessionSelector && sessionSelector.value) {
+                filename = `session_${sessionSelector.value}`;
+            }
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+            filename += `_${timestamp}.xlsx`;
+
+            XLSX.writeFile(wb, filename);
+
+            showAlert('success', `Exported ${adsData.length} ads as Excel`);
         }
 
         function showAlert(type, message) {
