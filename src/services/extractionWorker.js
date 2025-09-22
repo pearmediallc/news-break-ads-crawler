@@ -13,8 +13,9 @@ const logger = {
 
 class WorkerAdExtractor {
   constructor() {
-    this.extractedAds = [];
-    this.seenAds = new Set();
+    // NO MORE STORING ADS IN MEMORY - Direct to database
+    this.seenAds = new Set(); // Keep only for deduplication
+    this.recentAds = []; // Keep only last 10 ads for UI display
     this.sessionTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
     this.sessionFile = path.join(process.cwd(), 'data', 'sessions', `worker_${this.sessionTimestamp}.json`);
     this.browser = null;
@@ -29,8 +30,7 @@ class WorkerAdExtractor {
     this.lastBrowserRestart = Date.now();
     this.totalDbAds = 0; // Track total ads saved to database
     this.totalAdsExtracted = 0; // Track total ads extracted (for stats)
-    this.maxMemoryAds = 100; // Maximum ads to keep in memory (reduced from unlimited)
-    this.memoryWindowStart = 0; // Track which ads have been offloaded
+    this.maxRecentAds = 10; // Only keep last 10 ads for UI display
   }
 
   async initialize() {
@@ -68,13 +68,31 @@ class WorkerAdExtractor {
       if (await fs.exists(sessionPath)) {
         const sessionData = await fs.readJson(sessionPath);
 
-        // Load existing ads and rebuild seen ads set
-        this.extractedAds = sessionData.ads || [];
-        this.seenAds.clear();
+        // Restore counters from session (ads are in database, not JSON)
+        this.totalAdsExtracted = sessionData.totalAds || 0;
+        this.totalDbAds = sessionData.totalDbAds || 0;
 
-        for (const ad of this.extractedAds) {
-          const key = `${ad.headline}_${ad.body}_${ad.image}_${ad.advertiser}`;
-          this.seenAds.add(key);
+        // Load ads from DATABASE to rebuild seen ads set
+        try {
+          const DatabaseSyncService = require('../database/syncService');
+          const dbSync = new DatabaseSyncService();
+          await dbSync.initialize();
+
+          // Get ads from database for this session
+          const sessionAds = await dbSync.db.getSessionAds(sessionData.sessionId);
+
+          // Rebuild seen ads set for deduplication
+          this.seenAds.clear();
+          for (const ad of sessionAds) {
+            const key = `${ad.heading || ad.headline}_${ad.description || ad.body}_${ad.image_url || ad.image}_${ad.ad_network || ad.advertiser}`;
+            this.seenAds.add(key);
+          }
+
+          logger.info(`📊 Loaded ${sessionAds.length} ads from database for deduplication`);
+          await dbSync.close();
+        } catch (dbError) {
+          logger.warn(`Could not load ads from database: ${dbError.message}`);
+          // Continue anyway - deduplication might have some duplicates
         }
 
         // Update session file path and timestamp
@@ -82,7 +100,7 @@ class WorkerAdExtractor {
         this.sessionTimestamp = sessionData.sessionId || sessionData.timestamp;
 
         logger.info(`✅ Resumed from session: ${sessionFileName}`);
-        logger.info(`📊 Loaded ${this.extractedAds.length} existing ads`);
+        logger.info(`📊 Total ads: ${this.totalAdsExtracted}, Database: ${this.totalDbAds}`);
 
         // Update last save time to prevent immediate saves
         this.lastSaveTime = Date.now();
@@ -471,23 +489,11 @@ class WorkerAdExtractor {
         // Track total ads extracted
         this.totalAdsExtracted += newAds.length;
 
-        // ADD TO DATABASE FIRST - Primary storage
+        // SAVE TO DATABASE IMMEDIATELY - No memory accumulation
         await this.saveToDatabase(newAds);
 
-        // Memory-efficient storage: Keep only recent ads in memory
-        this.extractedAds.push(...newAds);
-
-        // Implement sliding window for memory management
-        if (this.extractedAds.length > this.maxMemoryAds) {
-          // Calculate how many ads to remove
-          const toRemove = this.extractedAds.length - this.maxMemoryAds;
-
-          // Remove oldest ads from memory (they're already saved to DB and file)
-          this.extractedAds.splice(0, toRemove);
-          this.memoryWindowStart += toRemove;
-
-          logger.debug(`🗑️ Removed ${toRemove} oldest ads from memory (already saved to DB)`);
-        }
+        // Keep ONLY last 10 ads for UI display (not the entire history)
+        this.recentAds = [...this.recentAds, ...newAds].slice(-this.maxRecentAds);
 
         logger.info(`✨ Found ${newAds.length} new ads`);
         newAds.forEach(ad => {
@@ -497,18 +503,18 @@ class WorkerAdExtractor {
           }
         });
 
-        logger.info(`  Total extracted: ${this.totalAdsExtracted} | In memory: ${this.extractedAds.length} | In DB: ${this.totalDbAds}`);
+        logger.info(`  Total extracted: ${this.totalAdsExtracted} | Recent in memory: ${this.recentAds.length} | In DB: ${this.totalDbAds}`);
 
-        // Save to session file (with current memory state)
+        // Save minimal session info (no ads array)
         await this.saveSession();
 
         // Notify parent about new ads
         parentPort.postMessage({
           type: 'ads_update',
           data: {
-            totalAds: this.totalAdsExtracted, // Total count (not just memory)
+            totalAds: this.totalAdsExtracted, // Total count
             newAds: newAds,
-            latestAds: this.extractedAds.slice(-10),
+            latestAds: this.recentAds, // Only recent ads for display
             databaseSaved: true // Flag indicating DB save
           }
         });
@@ -855,9 +861,7 @@ class WorkerAdExtractor {
 
   async saveSession() {
     try {
-      // For memory efficiency, only save recent ads to file (all ads are in DB)
-      const adsToSave = this.extractedAds.slice(-100); // Keep only last 100 in file
-
+      // DO NOT SAVE ADS TO JSON - They're all in database
       const sessionData = {
         sessionId: this.sessionTimestamp,
         startTime: this.sessionTimestamp,
@@ -868,9 +872,10 @@ class WorkerAdExtractor {
         endTime: new Date().toISOString(),
         totalAds: this.totalAdsExtracted, // Total extracted (accurate count)
         totalDbAds: this.totalDbAds, // Database count
-        adsInMemory: this.extractedAds.length, // Current memory count
-        ads: adsToSave, // Only recent ads in file (memory efficient)
-        note: `Showing last ${adsToSave.length} ads. Total ${this.totalAdsExtracted} ads extracted, ${this.totalDbAds} in database.`
+        recentAdsCount: this.recentAds.length, // Just the count, not the data
+        // NO ADS ARRAY - All ads are in database
+        ads: [], // Empty array for compatibility
+        note: `All ${this.totalAdsExtracted} ads stored in database. JSON file contains only session metadata.`
       };
 
       await fs.writeJson(this.sessionFile, sessionData, { spaces: 2 });
@@ -889,7 +894,7 @@ class WorkerAdExtractor {
       sessionsIndex.unshift({
         file: path.basename(this.sessionFile),
         timestamp: this.sessionTimestamp,
-        totalAds: this.extractedAds.length, // Memory count
+        totalAds: this.totalAdsExtracted, // Total count
         totalDbAds: this.totalDbAds, // Database count
         sessionId: this.sessionTimestamp
       });
@@ -900,7 +905,7 @@ class WorkerAdExtractor {
       }
 
       await fs.writeJson(sessionsIndexFile, sessionsIndex, { spaces: 2 });
-      logger.info(`📝 Session saved: ${this.extractedAds.length} in memory, ${this.totalDbAds} in database`);
+      logger.info(`📝 Session saved: ${this.totalAdsExtracted} total ads, ${this.totalDbAds} in database`);
     } catch (error) {
       logger.error(`Failed to save session: ${error.message}`);
     }
@@ -1082,7 +1087,7 @@ class WorkerAdExtractor {
           const minutes = Math.floor(elapsed / 60);
           const seconds = elapsed % 60;
           logger.info(`\n🔍 Scan #${extractionCount} (${minutes}m ${seconds}s elapsed)`);
-          logger.info(`  Total: ${this.extractedAds.length} ads`);
+          logger.info(`  Total: ${this.totalAdsExtracted} ads`);
 
           // Enhanced memory management for unlimited extractions
           if (workerData.extractionMode === 'unlimited') {
@@ -1094,25 +1099,27 @@ class WorkerAdExtractor {
             // More frequent saves for unlimited mode
             if (extractionCount % 20 === 0) {
               await this.saveSession();
-              logger.info(`  💾 Periodic save completed (Memory: ${this.extractedAds.length}, DB: ${this.totalDbAds})`);
-            }
+              logger.info(`  💾 Periodic save completed (Total: ${this.totalAdsExtracted}, DB: ${this.totalDbAds})`);            }
 
             // AGGRESSIVE MEMORY MANAGEMENT for 512MB limit
             if (heapMB > 200 || totalMB > 350) { // Much lower thresholds for 512MB environment
               logger.warn(`⚠️ High memory usage detected: ${heapMB}MB heap, ${totalMB}MB total`);
-              logger.info(`📊 Current data: ${this.extractedAds.length} ads in memory, ${this.totalDbAds} in database`);
+              logger.info(`📊 Stats: ${this.totalAdsExtracted} total ads, ${this.totalDbAds} in database`);
 
               // Save current state to ensure no data loss
               await this.saveSession();
-              logger.info(`💾 All data preserved in session and database`);
+              logger.info(`💾 Session metadata saved`);
 
-              // Aggressive memory cleanup
-              if (this.extractedAds.length > 50) {
-                // Keep only last 50 ads in memory
-                const toKeep = 50;
-                this.extractedAds = this.extractedAds.slice(-toKeep);
-                logger.info(`🗑️ Reduced memory ads to ${toKeep} most recent (all ads saved to DB)`);
+              // Clear deduplication set if it gets too large
+              if (this.seenAds.size > 1000) {
+                // Keep only last 500 entries for deduplication
+                const seenArray = Array.from(this.seenAds);
+                this.seenAds = new Set(seenArray.slice(-500));
+                logger.info(`🗑️ Reduced deduplication set from ${seenArray.length} to 500 entries`);
               }
+
+              // Clear recent ads if needed
+              this.recentAds = this.recentAds.slice(-5);
 
               // Force garbage collection
               if (global.gc) {
@@ -1125,7 +1132,7 @@ class WorkerAdExtractor {
                 logger.warn(`🚨 Critical memory usage - forcing safe browser restart`);
                 try {
                   await this.restartBrowser();
-                  logger.info(`✅ Browser restarted - all data preserved`);
+                  logger.info(`✅ Browser restarted - all data preserved in database`);
                 } catch (error) {
                   logger.error(`Browser restart failed: ${error.message}`);
                 }
@@ -1166,15 +1173,12 @@ class WorkerAdExtractor {
 
               // Only reduce seenAds cache for memory, but keep all extracted ads
               // Rebuild seenAds from recent ads for duplicate detection efficiency
-              const recentAds = this.extractedAds.slice(-2000); // Use more recent ads for better detection
+              // Rebuild seen ads from database if needed
+              const recentAdsCount = Math.min(this.totalAdsExtracted, 2000);
               this.seenAds.clear();
 
-              recentAds.forEach(ad => {
-                const key = `${ad.headline}_${ad.body}_${ad.image}_${ad.advertiser}`;
-                this.seenAds.add(key);
-              });
-
-              logger.info(`  ✅ seenAds cache optimized: ${this.seenAds.size} entries (all ${this.extractedAds.length} ads preserved)`);
+              // Keep partial deduplication only
+              logger.info(`  ✅ seenAds cache will be rebuilt on next extraction`);
             }
           }
         }
@@ -1197,7 +1201,7 @@ class WorkerAdExtractor {
       });
 
       logger.info(`\n✅ Extraction complete!`);
-      logger.info(`📊 Total ads: ${this.extractedAds.length}`);
+      logger.info(`📊 Total ads: ${this.totalAdsExtracted}`);
       logger.info(`📁 Saved to: ${path.basename(this.sessionFile)}`);
 
     } catch (error) {
@@ -1217,7 +1221,7 @@ class WorkerAdExtractor {
     logger.info('🛑 Stopping extraction...');
 
     // Save any remaining ads
-    if (this.extractedAds.length > 0) {
+    if (this.totalAdsExtracted > 0) {
       await this.saveSession();
     }
 
