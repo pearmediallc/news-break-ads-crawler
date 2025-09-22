@@ -164,15 +164,8 @@ class WorkerAdExtractor {
                   return;
                 }
 
-                // Check for ad-related content even without iframe
-                const hasAdContent = container.querySelector('[class*="sponsor"], [class*="promoted"], [class*="ad"], [class*="Sponsor"], [class*="Promoted"]') ||
-                                   container.textContent.toLowerCase().includes('sponsored') ||
-                                   container.textContent.toLowerCase().includes('promoted');
-
-                if (hasAdContent) {
-                  console.log('✅ ForYou sponsored content:', container.id || container.className);
-                  foundAds.push({ container, iframe: null, type: 'ForYou-Sponsored' });
-                }
+                // ORIGINAL LOGIC: Only extract ForYou containers with iframes
+                // Do NOT extract sponsored content without iframes
               });
             } catch (e) {
               console.warn('Error with selector:', selector, e.message);
@@ -182,25 +175,11 @@ class WorkerAdExtractor {
           console.log(`🎯 UNLIMITED MODE: Found ${foundAds.length} ForYou ads`);
 
           // Fallback: If no ForYou containers found, try alternative approaches
+          // ORIGINAL LOGIC: Focus on ForYou containers ONLY
           if (foundAds.length === 0) {
-            // Try common iframe selectors as fallback
-            const fallbackIframes = document.querySelectorAll('iframe[src*="doubleclick"], iframe[src*="googlesyndication"], iframe[src*="amazon-adsystem"], iframe[class*="ad"], iframe[id*="ad"]');
-
-            fallbackIframes.forEach((iframe) => {
-              // NO LIMIT - Extract ALL iframes found
-              const container = iframe.closest('div, section, article') || iframe.parentElement;
-              foundAds.push({ container, iframe, type: 'Fallback-Iframe' });
-            });
-
-            // Try looking for any sponsored content
-            const sponsoredElements = document.querySelectorAll('[class*="sponsor" i], [class*="promoted" i], [data-ad], [data-sponsor]');
-
-            sponsoredElements.forEach((element) => {
-              // NO LIMIT - Extract ALL sponsored elements found
-              if (!foundAds.find(ad => ad.container === element)) {
-                foundAds.push({ container: element, iframe: null, type: 'Fallback-Sponsored' });
-              }
-            });
+            console.log('No ForYou containers found with standard selectors');
+            // Do NOT use fallback iframes or sponsored content
+            // ONLY extract from ForYou containers as originally designed
 
             if (foundAds.length > 0) {
               console.log(`🔄 Fallback detection found ${foundAds.length} potential ads`);
@@ -260,40 +239,14 @@ class WorkerAdExtractor {
           });
 
           // Add the same fallback logic as unlimited mode
+          // ORIGINAL LOGIC: Focus on ForYou containers ONLY
           if (foundAds.length === 0) {
-            // Try common iframe selectors as fallback
-            const fallbackIframes = document.querySelectorAll('iframe[src*="doubleclick"], iframe[src*="googlesyndication"], iframe[src*="amazon-adsystem"], iframe[class*="ad"], iframe[id*="ad"]');
-
-            fallbackIframes.forEach((iframe) => {
-              // NO LIMIT - Extract ALL iframes found
-              const container = iframe.closest('div, section, article') || iframe.parentElement;
-              foundAds.push({ container, iframe, type: 'Fallback-Iframe' });
-            });
-
-            // Try looking for any sponsored content
-            const sponsoredElements = document.querySelectorAll('[class*="sponsor" i], [class*="promoted" i], [data-ad], [data-sponsor]');
-
-            sponsoredElements.forEach((element) => {
-              // NO LIMIT - Extract ALL sponsored elements found
-              if (!foundAds.find(ad => ad.container === element)) {
-                foundAds.push({ container: element, iframe: null, type: 'Fallback-Sponsored' });
-              }
-            });
+            console.log('No ForYou containers found with standard selectors');
+            // Do NOT use fallback iframes or sponsored content
+            // ONLY extract from ForYou containers as originally designed
           }
 
-          // PATTERN 2: Ad network iframes
-          document.querySelectorAll('iframe[class*="mspai"], iframe[class*="nova"], iframe[id*="google_ads"], iframe[name*="google_ads"], iframe[src*="doubleclick"], iframe[src*="googlesyndication"]').forEach(iframe => {
-            if (!foundAds.find(ad => ad.iframe === iframe)) {
-              foundAds.push({ container: iframe.parentElement, iframe, type: 'AdNetwork' });
-            }
-          });
-
-          // PATTERN 3: Sponsored content containers
-          document.querySelectorAll('[class*="sponsor" i], [class*="promoted" i], [class*="ad-" i], [class*="advertisement" i], [data-ad], [data-sponsor], [data-promoted]').forEach(container => {
-            if (!foundAds.find(ad => ad.container === container)) {
-              foundAds.push({ container, iframe: null, type: 'Sponsored' });
-            }
-          });
+          // ORIGINAL LOGIC: Only use ForYou containers, no other patterns
         }
 
 
@@ -562,24 +515,76 @@ class WorkerAdExtractor {
               logger.debug(`Interaction attempt failed: ${interactionError.message}`);
             }
 
-            // If stuck for too long, try navigating to a different section
-            if (this.consecutiveNoNewAds > 30 && this.consecutiveNoNewAds % 10 === 0) {
-              logger.info(`🔄 Attempting to navigate to different content section...`);
+            // MORE AGGRESSIVE: Navigate to different content every 15 no-new-ads
+            if (this.consecutiveNoNewAds > 15 && this.consecutiveNoNewAds % 5 === 0) {
+              logger.info(`🔄 Navigating to find fresh content with ads...`);
               try {
                 const currentUrl = await this.page.url();
                 const baseUrl = new URL(currentUrl).origin;
-                const sections = ['/local', '/trending', '/national', '/entertainment', '/sports'];
-                const randomSection = sections[Math.floor(Math.random() * sections.length)];
-                const newUrl = `${baseUrl}${randomSection}`;
+
+                // Extended list of sections and cities to explore
+                const sections = [
+                  '/local', '/trending', '/national', '/entertainment', '/sports',
+                  '/business', '/technology', '/health', '/science', '/politics',
+                  '/world', '/lifestyle', '/food', '/travel', '/real-estate'
+                ];
+
+                // Major US cities for location-based content
+                const cities = [
+                  'new-york-ny', 'los-angeles-ca', 'chicago-il', 'houston-tx',
+                  'phoenix-az', 'philadelphia-pa', 'san-antonio-tx', 'san-diego-ca',
+                  'dallas-tx', 'san-jose-ca', 'austin-tx', 'jacksonville-fl',
+                  'fort-worth-tx', 'columbus-oh', 'san-francisco-ca', 'charlotte-nc',
+                  'indianapolis-in', 'seattle-wa', 'denver-co', 'washington-dc',
+                  'boston-ma', 'el-paso-tx', 'detroit-mi', 'nashville-tn',
+                  'portland-or', 'memphis-tn', 'oklahoma-city-ok', 'las-vegas-nv',
+                  'louisville-ky', 'baltimore-md', 'milwaukee-wi', 'albuquerque-nm'
+                ];
+
+                let newUrl;
+
+                // Strategy 1: Try different city pages (50% chance)
+                if (Math.random() > 0.5 && cities.length > 0) {
+                  const randomCity = cities[Math.floor(Math.random() * cities.length)];
+                  newUrl = `${baseUrl}/${randomCity}`;
+                  logger.info(`🏙️ Trying city page: ${randomCity}`);
+                }
+                // Strategy 2: Try category + city combination (25% chance)
+                else if (Math.random() > 0.75) {
+                  const randomSection = sections[Math.floor(Math.random() * sections.length)];
+                  const randomCity = cities[Math.floor(Math.random() * cities.length)];
+                  newUrl = `${baseUrl}/${randomCity}${randomSection}`;
+                  logger.info(`🎯 Trying combo: ${randomCity}${randomSection}`);
+                }
+                // Strategy 3: Just section (25% chance)
+                else {
+                  const randomSection = sections[Math.floor(Math.random() * sections.length)];
+                  newUrl = `${baseUrl}${randomSection}`;
+                  logger.info(`📂 Trying section: ${randomSection}`);
+                }
 
                 logger.info(`🌐 Navigating to: ${newUrl}`);
                 await this.page.goto(newUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
+                // Wait for content to load
+                await new Promise(resolve => setTimeout(resolve, 3000));
+
+                // Scroll down a bit to trigger ad loading
+                await this.page.evaluate(() => {
+                  window.scrollTo(0, 500);
+                });
+
                 // Reset counters after navigation
                 this.consecutiveNoNewAds = 0;
-                logger.info(`✅ Navigated to new section, resetting counters`);
+                logger.info(`✅ Navigated to new content, resetting extraction`);
+
+                // Force an immediate extraction after navigation
+                const newAdsFound = await this.extractAds();
+                if (newAdsFound > 0) {
+                  logger.info(`🎉 New location yielded ${newAdsFound} new ads!`);
+                }
               } catch (navError) {
-                logger.warn(`Navigation to different section failed: ${navError.message}`);
+                logger.warn(`Navigation failed: ${navError.message}`);
               }
             }
           }
@@ -601,7 +606,61 @@ class WorkerAdExtractor {
           if (ads.length <= 1) {
             logger.info(`💡 Try: 1) Different URL, 2) Clear cookies, 3) Check if ads are blocked`);
           } else {
-            logger.info(`💡 Content may be exhausted or page needs different interaction`);
+            logger.info(`💡 Content may be exhausted - rotating to new location soon...`);
+          }
+
+          // STRATEGY: Navigate to article pages to find embedded ads
+          if (this.consecutiveNoNewAds > 10 && this.consecutiveNoNewAds % 8 === 0) {
+            logger.info(`📰 Attempting to open article page for more ads...`);
+            try {
+              const articleUrl = await this.page.evaluate(() => {
+                // Find article links on the page
+                const articleLinks = document.querySelectorAll('a[href*="/news/"], a[href*="/article/"], h2 a, h3 a');
+                const validLinks = Array.from(articleLinks).filter(link => {
+                  const href = link.href;
+                  return href &&
+                         !href.includes('#') &&
+                         !href.includes('javascript:') &&
+                         href.includes('newsbreak.com');
+                });
+
+                if (validLinks.length > 0) {
+                  // Pick a random article from the first 10
+                  const randomIndex = Math.floor(Math.random() * Math.min(validLinks.length, 10));
+                  return validLinks[randomIndex].href;
+                }
+                return null;
+              });
+
+              if (articleUrl) {
+                logger.info(`📄 Opening article: ${articleUrl}`);
+                await this.page.goto(articleUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+                // Wait for content and scroll
+                await new Promise(resolve => setTimeout(resolve, 3000));
+
+                // Scroll through article to trigger ads
+                for (let i = 0; i < 3; i++) {
+                  await this.page.evaluate(() => {
+                    window.scrollBy(0, 400);
+                  });
+                  await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+
+                // Extract ads from article page
+                const articleAds = await this.extractAds();
+                if (articleAds > 0) {
+                  logger.info(`✅ Found ${articleAds} ads in article page!`);
+                  this.consecutiveNoNewAds = 0; // Reset counter on success
+                }
+
+                // Go back to main feed
+                await this.page.goBack({ waitUntil: 'domcontentloaded', timeout: 30000 });
+                logger.info(`↩️ Returned to main feed`);
+              }
+            } catch (articleError) {
+              logger.warn(`Article navigation failed: ${articleError.message}`);
+            }
           }
         }
       }
@@ -1125,7 +1184,8 @@ class WorkerAdExtractor {
       // Initial extraction
       await this.extractAds();
 
-      while (this.isRunning && (Date.now() - this.startTime) < durationMs) {
+      // In unlimited mode, run forever. In timed mode, check duration
+      while (this.isRunning && (workerData.extractionMode === 'unlimited' || (Date.now() - this.startTime) < durationMs)) {
         extractionCount++;
 
         // Scroll and wait (skip if browser disconnected)

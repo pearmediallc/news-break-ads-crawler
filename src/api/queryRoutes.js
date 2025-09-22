@@ -27,7 +27,7 @@ router.get('/ads', async (req, res) => {
       startDate: req.query.start_date,
       endDate: req.query.end_date,
       search: req.query.search,
-      limit: parseInt(req.query.limit) || 100
+      limit: parseInt(req.query.limit) || 1000000  // Default to 1 million for unlimited mode
     };
 
     // Remove null/undefined filters
@@ -245,7 +245,7 @@ router.post('/ads/query', async (req, res) => {
     const {
       filters = {},
       sort = { field: 'timestamp', direction: 'DESC' },
-      pagination = { limit: 10000, offset: 0 }  // Increased default limit to 10,000 for unlimited extraction
+      pagination = { limit: 1000000, offset: 0 }  // Set to 1 million for truly unlimited extraction
     } = req.body;
 
     console.log('📋 Query filters:', filters);

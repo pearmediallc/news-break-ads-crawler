@@ -788,7 +788,7 @@
                     body: JSON.stringify({
                         filters: { sessionIds: [sessionId] },
                         sort: { field: 'timestamp', direction: 'DESC' },
-                        pagination: { limit: 10000, offset: 0 }
+                        pagination: { limit: 1000000, offset: 0 }  // 1 million for unlimited extraction
                     })
                 });
 
@@ -1534,7 +1534,7 @@
                     body: JSON.stringify({
                         filters: filters,
                         sort: { field: 'timestamp', direction: 'DESC' },
-                        pagination: { limit: 100000, offset: 0 }  // NO LIMIT - Request up to 100,000 ads
+                        pagination: { limit: 1000000, offset: 0 }  // NO LIMIT - Request up to 1 million ads
                     })
                 });
 
@@ -1912,7 +1912,7 @@
                             }
                         },
                         sort: { field: 'timestamp', direction: 'DESC' },
-                        pagination: { limit: 2000, offset: 0 }
+                        pagination: { limit: 1000000, offset: 0 }  // 1 million for unlimited extraction
                     })
                 });
 
