@@ -87,6 +87,18 @@ class DatabaseModels {
   // Ad operations
   async saveAd(adData) {
     try {
+      // First check if ad already exists (avoid duplicates)
+      if (adData.id || adData.ad_id) {
+        const existing = await this.db.get(
+          'SELECT id FROM ads WHERE ad_id = ? AND session_id = ?',
+          [adData.id || adData.ad_id, adData.sessionId]
+        );
+        if (existing) {
+          logger.debug(`Ad already exists: ${adData.id || adData.ad_id}`);
+          return { id: existing.id, changes: 0 };
+        }
+      }
+
       const sql = `
         INSERT INTO ads (
           session_id, ad_id, heading, description, image_url, link_url,
@@ -98,11 +110,11 @@ class DatabaseModels {
       const params = [
         adData.sessionId,
         adData.id || adData.ad_id || null,
-        adData.heading || null,
-        adData.description || null,
-        adData.image || adData.imageUrl || null,
-        adData.link || adData.linkUrl || null,
-        adData.adNetwork || adData.ad_network || null,
+        adData.heading || adData.headline || null,  // Support both 'heading' and 'headline'
+        adData.description || adData.body || null,  // Support both 'description' and 'body'
+        adData.image || adData.imageUrl || adData.image_url || null,
+        adData.link || adData.linkUrl || adData.link_url || null,
+        adData.adNetwork || adData.ad_network || adData.advertiser || null,  // Support 'advertiser' field
         adData.timestamp || new Date().toISOString(),
         adData.elementHtml || adData.element_html || null,
         adData.position?.x || adData.position_x || null,
@@ -117,6 +129,11 @@ class DatabaseModels {
       logger.debug(`Saved ad to database: session ${adData.sessionId}`);
       return result;
     } catch (error) {
+      // Check if it's a unique constraint violation (duplicate)
+      if (error.message && error.message.includes('UNIQUE constraint failed')) {
+        logger.debug('Duplicate ad detected, skipping');
+        return { id: null, changes: 0 };
+      }
       logger.error('Failed to save ad:', error);
       throw error;
     }
@@ -124,13 +141,31 @@ class DatabaseModels {
 
   async saveAds(ads, sessionId) {
     try {
-      const promises = ads.map(ad => this.saveAd({ ...ad, sessionId }));
-      const results = await Promise.all(promises);
-      logger.info(`Saved ${results.length} ads to database for session ${sessionId}`);
+      let successCount = 0;
+      let failCount = 0;
+      const results = [];
+
+      // Process ads one by one to handle errors gracefully
+      for (const ad of ads) {
+        try {
+          const result = await this.saveAd({ ...ad, sessionId });
+          results.push(result);
+          if (result.changes > 0) {
+            successCount++;
+          }
+        } catch (error) {
+          failCount++;
+          logger.debug(`Failed to save individual ad: ${error.message}`);
+          // Continue with next ad
+        }
+      }
+
+      logger.info(`Saved ${successCount} ads to database for session ${sessionId} (${failCount} failed/duplicates)`);
       return results;
     } catch (error) {
       logger.error('Failed to save ads batch:', error);
-      throw error;
+      // Don't throw - return empty array to allow extraction to continue
+      return [];
     }
   }
 

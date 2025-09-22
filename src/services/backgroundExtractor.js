@@ -14,12 +14,22 @@ class BackgroundExtractionService {
 
   async initialize() {
     try {
-      await this.dbSync.initialize();
+      // Try to initialize database but don't fail if it doesn't work
+      try {
+        await this.dbSync.initialize();
+        logger.info('Database sync service initialized successfully');
+      } catch (dbError) {
+        logger.warn('Database initialization failed, continuing without database sync:', dbError.message);
+        // Mark as not initialized so we can skip DB operations
+        this.dbSync.initialized = false;
+      }
+
       await this.loadPersistedExtractions();
       logger.info('Background extraction service initialized');
     } catch (error) {
       logger.error('Failed to initialize background extraction service:', error);
-      throw error;
+      // Don't throw - allow service to work without database
+      logger.warn('Service will continue without full functionality');
     }
   }
 
@@ -287,10 +297,21 @@ class BackgroundExtractionService {
         // Sync to database only if session exists
         try {
           if (data.newAds && data.newAds.length > 0 && extraction.sessionId) {
-            await this.dbSync.syncAds(data.newAds, extraction.sessionId);
+            // Ensure database is initialized before syncing
+            if (!this.dbSync.initialized) {
+              await this.dbSync.initialize().catch(err => {
+                logger.warn('Database initialization failed, continuing without DB sync:', err.message);
+                this.dbSync.initialized = false;
+              });
+            }
+
+            if (this.dbSync.initialized) {
+              await this.dbSync.syncAds(data.newAds, extraction.sessionId);
+            }
           }
         } catch (error) {
           logger.warn('Failed to sync ads to database:', error.message);
+          // Don't let database errors stop the extraction
         }
         break;
 
