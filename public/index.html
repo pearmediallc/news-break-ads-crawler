@@ -450,6 +450,9 @@
                     <button class="btn btn-primary" onclick="loadAllFromDatabase()" title="Load ads from database">
                         🗄️ Load DB
                     </button>
+                    <button class="btn btn-success" onclick="testDatabaseHealth()" title="Test database connection and health">
+                        🩺 Test DB
+                    </button>
                     <div style="display: flex; gap: 5px; align-items: center;">
                         <label for="timeframeFilter" style="font-size: 12px; color: #666;">Time Filter:</label>
                         <select id="timeframeFilter" onchange="applyTimeFilter()" style="padding: 6px; border-radius: 6px; border: 1px solid #ddd; font-size: 12px;">
@@ -1128,6 +1131,8 @@
 
         async function loadSessions() {
             try {
+                console.log('🔄 Loading sessions from files and database...');
+
                 // Load sessions from both JSON files and database
                 const [fileResponse, dbResponse] = await Promise.all([
                     fetch('/api/sessions/list'),
@@ -1139,6 +1144,9 @@
                 if (dbResponse.ok) {
                     const dbData = await dbResponse.json();
                     dbSessions = dbData.data || [];
+                    console.log(`📊 Found ${dbSessions.length} database sessions`);
+                } else {
+                    console.warn('⚠️ Could not load database sessions');
                 }
 
                 const selector = document.getElementById('sessionSelector');
@@ -1157,6 +1165,7 @@
                         const status = session.status === 'active' ? '🟢' : '';
                         option.textContent = `${status} ${date} (${session.total_ads || 0} ads)`;
                         dbGroup.appendChild(option);
+                        console.log(`  📋 Added DB session: ${session.session_id} (${session.total_ads || 0} ads)`);
                     });
 
                     selector.appendChild(dbGroup);
@@ -1458,19 +1467,63 @@
             }
         }
 
+        async function testDatabaseHealth() {
+            console.log('🩺 Testing database health...');
+
+            try {
+                const response = await fetch('/api/query/health');
+                const result = await response.json();
+
+                console.log('📊 Database health results:', result);
+
+                if (result.success && result.connected) {
+                    const stats = result.stats;
+                    const message = `✅ Database Connected!\n\nStats:\n• Total Ads: ${stats.totalAds}\n• Total Sessions: ${stats.totalSessions}\n• Recent Ads: ${stats.recentAds}\n\nSessions in DB: ${result.sessions.map(s => s.session_id).join(', ') || 'None'}`;
+                    alert(message);
+
+                    // Also log sample data
+                    if (result.recentAds && result.recentAds.length > 0) {
+                        console.log('📦 Sample ads from database:', result.recentAds);
+                    }
+                    if (result.sessions && result.sessions.length > 0) {
+                        console.log('📋 Sessions in database:', result.sessions);
+                    }
+                } else {
+                    alert(`❌ Database Connection Failed!\n\nError: ${result.error || 'Unknown error'}`);
+                }
+            } catch (error) {
+                console.error('🩺 Database health test failed:', error);
+                alert(`❌ Database Test Failed!\n\nError: ${error.message}`);
+            }
+        }
+
         async function loadAllFromDatabase() {
+            console.log('Loading ads from database...');
             document.getElementById('adsLoading').classList.add('active');
 
             try {
                 // Check if a session is selected
                 const sessionSelector = document.getElementById('sessionSelector');
                 const selectedSession = sessionSelector ? sessionSelector.value : '';
+                console.log('Selected session:', selectedSession);
 
                 // Build filters based on selection
                 const filters = {};
                 if (selectedSession) {
-                    filters.sessionIds = [selectedSession];
+                    // Check if it's a database session or file session
+                    const selectedOption = sessionSelector.options[sessionSelector.selectedIndex];
+                    const isDbSession = selectedOption && selectedOption.dataset.source === 'database';
+
+                    if (isDbSession || selectedSession.includes('T')) {
+                        // Database session ID format
+                        filters.sessionIds = [selectedSession];
+                    } else {
+                        // File session - extract timestamp from filename
+                        const sessionId = selectedSession.replace('worker_', '').replace('.json', '');
+                        filters.sessionIds = [sessionId];
+                    }
                 }
+                console.log('Filters:', filters);
 
                 // Query ads from database
                 const response = await fetch('/api/query/ads/query', {
@@ -1481,50 +1534,67 @@
                     body: JSON.stringify({
                         filters: filters,
                         sort: { field: 'timestamp', direction: 'DESC' },
-                        pagination: { limit: 5000, offset: 0 }
+                        pagination: { limit: 10000, offset: 0 }
                     })
                 });
 
+                console.log('Response status:', response.status);
                 const result = await response.json();
+                console.log('Result:', result);
 
                 if (result.success) {
-                    // Map database field names to frontend field names
-                    const mappedAds = result.data.map(dbAd => ({
-                        id: dbAd.id || dbAd.ad_id,
-                        advertiser: dbAd.ad_network || dbAd.advertiser || 'Unknown',
-                        headline: dbAd.heading || dbAd.headline || '',
-                        body: dbAd.description || dbAd.body || '',
-                        image: dbAd.image_url || dbAd.image || '',
-                        link: dbAd.link_url || dbAd.link || '',
-                        timestamp: dbAd.timestamp || dbAd.created_at || new Date().toISOString(),
-                        // Keep original fields for reference
-                        containerId: dbAd.session_id,
-                        iframeSize: dbAd.width && dbAd.height ? `${dbAd.width}x${dbAd.height}` : ''
-                    }));
+                    console.log('Raw data from database:', result.data.slice(0, 2)); // Log first 2 items for debugging
 
-                    adsData = mappedAds;
-                    displayAds(mappedAds);
+                    if (result.data && result.data.length > 0) {
+                        // Map database field names to frontend field names
+                        const mappedAds = result.data.map(dbAd => ({
+                            id: dbAd.id || dbAd.ad_id,
+                            advertiser: dbAd.ad_network || dbAd.advertiser || 'Unknown',
+                            headline: dbAd.heading || dbAd.headline || '',
+                            body: dbAd.description || dbAd.body || '',
+                            image: dbAd.image_url || dbAd.image || '',
+                            link: dbAd.link_url || dbAd.link || '',
+                            timestamp: dbAd.timestamp || dbAd.created_at || new Date().toISOString(),
+                            // Keep original fields for reference
+                            containerId: dbAd.session_id,
+                            iframeSize: dbAd.width && dbAd.height ? `${dbAd.width}x${dbAd.height}` : ''
+                        }));
 
-                    // Update stats properly
-                    const uniqueAdvertisers = new Set(mappedAds.map(ad => ad.advertiser).filter(a => a && a !== 'Unknown'));
-                    const adsWithLinks = mappedAds.filter(ad => ad.link).length;
+                        console.log('Mapped ads:', mappedAds.slice(0, 2)); // Log first 2 mapped items
 
-                    document.getElementById('totalAds').textContent = mappedAds.length;
-                    document.getElementById('uniqueAdvertisers').textContent = uniqueAdvertisers.size;
-                    document.getElementById('adsWithLinks').textContent = adsWithLinks;
+                        adsData = mappedAds;
+                        displayAds(mappedAds);
 
-                    // Update session info to show database mode
-                    if (selectedSession) {
-                        document.getElementById('currentSessionInfo').textContent =
-                            `(Database: Session ${selectedSession} - ${mappedAds.length} ads)`;
+                        // Update stats properly
+                        const uniqueAdvertisers = new Set(mappedAds.map(ad => ad.advertiser).filter(a => a && a !== 'Unknown'));
+                        const adsWithLinks = mappedAds.filter(ad => ad.link).length;
+
+                        document.getElementById('totalAds').textContent = mappedAds.length;
+                        document.getElementById('uniqueAdvertisers').textContent = uniqueAdvertisers.size;
+                        document.getElementById('adsWithLinks').textContent = adsWithLinks;
+
+                        // Update session info to show database mode
+                        if (selectedSession) {
+                            document.getElementById('currentSessionInfo').textContent =
+                                `(Database: Session ${selectedSession.slice(-8)} - ${mappedAds.length} ads)`;
+                        } else {
+                            document.getElementById('currentSessionInfo').textContent =
+                                `(Database: All Sessions - ${mappedAds.length} total ads)`;
+                        }
+
+                        showAlert('success', `Loaded ${mappedAds.length} ads from database`);
                     } else {
-                        document.getElementById('currentSessionInfo').textContent =
-                            `(Database: All Sessions - ${mappedAds.length} total ads)`;
-                    }
+                        document.getElementById('adsGrid').innerHTML = '<p style="text-align: center; padding: 40px; color: #666;">No ads found in database for the selected criteria.</p>';
 
-                    showAlert('success', `Loaded ${mappedAds.length} ads from database`);
+                        if (selectedSession) {
+                            showAlert('warning', `No ads found for session ${selectedSession.slice(-8)}`);
+                        } else {
+                            showAlert('warning', 'No ads found in database');
+                        }
+                    }
                 } else {
-                    showAlert('error', result.error || 'Failed to load ads from database');
+                    console.error('Database query failed:', result);
+                    showAlert('error', result.error || result.message || 'Failed to load ads from database');
                 }
             } catch (error) {
                 console.error('Failed to load all ads from database:', error);

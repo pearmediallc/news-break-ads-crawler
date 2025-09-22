@@ -141,28 +141,37 @@ class DatabaseModels {
 
   async saveAds(ads, sessionId) {
     try {
+      console.log(`💾 DatabaseModels.saveAds called: ${ads?.length} ads for session ${sessionId}`);
+
       let successCount = 0;
       let failCount = 0;
       const results = [];
 
       // Process ads one by one to handle errors gracefully
-      for (const ad of ads) {
+      for (const [index, ad] of ads.entries()) {
         try {
+          console.log(`  📦 Saving ad ${index + 1}/${ads.length}: ${ad.headline || ad.heading || 'No headline'}`);
           const result = await this.saveAd({ ...ad, sessionId });
           results.push(result);
           if (result.changes > 0) {
             successCount++;
+            console.log(`    ✅ Ad saved successfully (changes: ${result.changes})`);
+          } else {
+            console.log(`    ⏭️ Ad skipped (duplicate or no changes)`);
           }
         } catch (error) {
           failCount++;
+          console.error(`    ❌ Failed to save ad ${index + 1}: ${error.message}`);
           logger.debug(`Failed to save individual ad: ${error.message}`);
           // Continue with next ad
         }
       }
 
+      console.log(`✅ Database batch save complete: ${successCount} saved, ${failCount} failed/duplicates`);
       logger.info(`Saved ${successCount} ads to database for session ${sessionId} (${failCount} failed/duplicates)`);
       return results;
     } catch (error) {
+      console.error('❌ Database batch save failed:', error);
       logger.error('Failed to save ads batch:', error);
       // Don't throw - return empty array to allow extraction to continue
       return [];

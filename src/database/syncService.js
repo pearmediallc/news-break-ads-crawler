@@ -74,15 +74,29 @@ class DatabaseSyncService {
   // Sync ads to database
   async syncAds(ads, sessionId) {
     try {
+      console.log(`🔄 DatabaseSyncService.syncAds called: ${ads?.length} ads for session ${sessionId}`);
+      console.log(`📊 Database initialized: ${this.initialized}`);
+
       // Skip if database is not initialized
       if (!this.initialized) {
+        console.warn('⚠️ Database not initialized, skipping ad sync');
         logger.debug('Database not initialized, skipping ad sync');
         return;
       }
 
-      await this.db.saveAds(ads, sessionId);
+      if (!ads || ads.length === 0) {
+        console.log('📭 No ads to sync');
+        return;
+      }
+
+      console.log('💾 Saving ads to database...');
+      const result = await this.db.saveAds(ads, sessionId);
+      console.log(`✅ Database sync result:`, result);
+
       logger.info(`Synced ${ads.length} ads to database for session ${sessionId}`);
+      console.log(`✅ Successfully synced ${ads.length} ads to database for session ${sessionId}`);
     } catch (error) {
+      console.error('❌ Failed to sync ads to database:', error);
       logger.error('Failed to sync ads:', error.message);
       // Don't throw - allow extraction to continue
       // Ads are still saved in JSON session files
