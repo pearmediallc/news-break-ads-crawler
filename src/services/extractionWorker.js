@@ -516,7 +516,7 @@ class WorkerAdExtractor {
           logger.info(`  seenAds cache: ${this.seenAds.size} entries | Consecutive no-new: ${this.consecutiveNoNewAds}`);
 
           // If we're only finding cross-origin iframes repeatedly, try different strategy
-          if (this.consecutiveNoNewAds > 5 && workerData.extractionMode === 'unlimited') {
+          if (this.consecutiveNoNewAds > 3 && workerData.extractionMode === 'unlimited') {
             logger.info(`💡 Attempting to trigger ad loading by interacting with page...`);
 
             // Try to trigger ad loading by simulating user interaction
@@ -542,8 +542,8 @@ class WorkerAdExtractor {
               logger.debug(`Interaction attempt failed: ${interactionError.message}`);
             }
 
-            // MORE AGGRESSIVE: Navigate to different content every 15 no-new-ads
-            if (this.consecutiveNoNewAds > 15 && this.consecutiveNoNewAds % 5 === 0) {
+            // MORE AGGRESSIVE: Navigate to different content every 10 no-new-ads
+            if (this.consecutiveNoNewAds > 10 && this.consecutiveNoNewAds % 5 === 0) {
               logger.info(`🔄 Navigating to find fresh content with ads...`);
               try {
                 const currentUrl = await this.page.url();
@@ -716,11 +716,11 @@ class WorkerAdExtractor {
 
       // Calculate time since last refresh
       const timeSinceRefresh = Date.now() - this.lastPageRefresh;
-      const MIN_REFRESH_INTERVAL = 60000; // Minimum 60 seconds between refreshes
+      const MIN_REFRESH_INTERVAL = 30000; // Minimum 30 seconds between refreshes
 
       // Force refresh in unlimited mode if we haven't found new ads in a while
       const shouldForceRefresh = workerData.extractionMode === 'unlimited' &&
-                                this.consecutiveNoNewAds >= 20 && // Increased threshold
+                                this.consecutiveNoNewAds >= 8 && // Reduced threshold for more frequent refresh
                                 timeSinceRefresh > MIN_REFRESH_INTERVAL; // Respect minimum interval
 
       if (scrollInfo.atBottom) {
