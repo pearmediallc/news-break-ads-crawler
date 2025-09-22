@@ -522,9 +522,9 @@ class WorkerAdExtractor {
         const key = `${headline}_${body}_${advertiser}`;
 
         if (this.seenAds.has(key)) {
-          // Log duplicate detection for debugging
-          if (headline || body) {
-            logger.debug(`  Duplicate ad skipped: ${advertiser} - ${headline.substring(0, 50)}`);
+          // Log duplicate detection for debugging (but limit repetitive logs)
+          if ((headline || body) && Math.random() < 0.1) { // Only log 10% of duplicates to reduce spam
+            logger.debug(`Duplicate ad skipped: ${advertiser} - ${headline.substring(0, 30)}...`);
           }
           return false;
         }
@@ -579,11 +579,14 @@ class WorkerAdExtractor {
         if (ads.length === 0) {
           logger.info(`  No ads detected on page (seenAds: ${this.seenAds.size} entries)`);
         } else if (ads.length === 1 && ads[0].body && ads[0].body.includes('Cross-origin')) {
-          logger.info(`  Only cross-origin iframe detected - page may not have loaded ads yet`);
-          logger.info(`  seenAds cache: ${this.seenAds.size} entries | Consecutive no-new: ${this.consecutiveNoNewAds}`);
+          // Only log occasionally to reduce spam
+          if (this.consecutiveNoNewAds % 5 === 0) {
+            logger.info(`  Only cross-origin iframe detected (${this.consecutiveNoNewAds} times) - page may not have loaded ads yet`);
+            logger.info(`  seenAds cache: ${this.seenAds.size} entries`);
+          }
 
           // If we're only finding cross-origin iframes repeatedly, try different strategy
-          if (this.consecutiveNoNewAds > 3 && workerData.extractionMode === 'unlimited') {
+          if (this.consecutiveNoNewAds > 10 && workerData.extractionMode === 'unlimited') {
             logger.info(`💡 Attempting to trigger ad loading by interacting with page...`);
 
             // Try to trigger ad loading by simulating user interaction
@@ -596,30 +599,51 @@ class WorkerAdExtractor {
                 // Focus window
                 window.focus();
 
-                // Try clicking on article links to navigate to content with ads
-                const articleLinks = document.querySelectorAll('a[href*="/news/"], a[href*="/article/"]');
-                if (articleLinks.length > 0 && Math.random() > 0.7) {
-                  const randomLink = articleLinks[Math.floor(Math.random() * Math.min(articleLinks.length, 5))];
-                  console.log('Clicking on article link:', randomLink.href);
-                  // Don't actually navigate, just trigger events
-                  randomLink.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-                }
+                // Trigger resize event to reload responsive ads
+                window.dispatchEvent(new Event('resize'));
+
+                // Try to trigger ad refresh by simulating viewport changes
+                const originalWidth = window.innerWidth;
+                Object.defineProperty(window, 'innerWidth', { writable: true, value: originalWidth + 100 });
+                window.dispatchEvent(new Event('resize'));
+                Object.defineProperty(window, 'innerWidth', { writable: true, value: originalWidth });
+                window.dispatchEvent(new Event('resize'));
               });
+
+              // Wait for potential ad loading
+              await new Promise(resolve => setTimeout(resolve, 3000));
+
             } catch (interactionError) {
               logger.debug(`Interaction attempt failed: ${interactionError.message}`);
+            }
+
+            // If still stuck after 20 attempts, try page refresh
+            if (this.consecutiveNoNewAds > 20) {
+              logger.info(`🔄 Refreshing page to load new ad inventory...`);
+              try {
+                await this.page.reload({ waitUntil: 'networkidle2', timeout: 30000 });
+                await new Promise(resolve => setTimeout(resolve, 5000));
+                this.consecutiveNoNewAds = 0; // Reset counter after refresh
+                logger.info(`✅ Page refreshed successfully`);
+              } catch (refreshError) {
+                logger.warn(`Page refresh failed: ${refreshError.message}`);
+              }
             }
 
             // STAY ON SAME URL: Just continue with page refresh and scrolling
             // No URL navigation - keep extraction on the original URL only
           }
         } else {
-          logger.info(`  No new ads found (${ads.length} total found, all duplicates)`);
-          logger.info(`  seenAds cache: ${this.seenAds.size} entries`);
+          // Only log occasionally to reduce spam
+          if (this.consecutiveNoNewAds % 5 === 0) {
+            logger.info(`  No new ads found (${ads.length} total found, all duplicates)`);
+            logger.info(`  seenAds cache: ${this.seenAds.size} entries`);
 
-          // Log sample of what was found for debugging
-          if (ads.length > 0) {
-            const sample = ads[0];
-            logger.info(`  Sample duplicate: "${(sample.headline || sample.body || 'No content').substring(0, 40)}..."`);
+            // Log sample of what was found for debugging
+            if (ads.length > 0) {
+              const sample = ads[0];
+              logger.info(`  Sample duplicate: "${(sample.headline || sample.body || 'No content').substring(0, 40)}..."`);
+            }
           }
         }
 
@@ -654,22 +678,27 @@ class WorkerAdExtractor {
 
       if (scrollY >= maxScroll - 100) {
         // At bottom - refresh page occasionally or scroll back up
-        if (this.consecutiveNoNewAds > 10) {
-          logger.info(`🔄 Refreshing page...`);
-          await this.page.reload({ waitUntil: 'domcontentloaded' });
+        if (this.consecutiveNoNewAds > 15) {
+          logger.info(`🔄 Refreshing page for new ad inventory...`);
+          await this.page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
           await this.page.evaluate(() => window.scrollTo(0, 0));
-          this.consecutiveNoNewAds = 0;
+          this.consecutiveNoNewAds = Math.max(0, this.consecutiveNoNewAds - 5); // Reduce but don't reset completely
         } else {
           logger.info(`📍 At bottom, scrolling back to top`);
-          await this.page.evaluate(() => window.scrollTo(0, 0));
+          await this.page.evaluate(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
+          // Wait a bit for smooth scroll to complete
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
       } else {
-        // Regular scrolling down
+        // Regular scrolling down with variable speeds
         logger.info(`📜 Auto-scrolling...`);
-        await this.page.evaluate(() => window.scrollBy(0, 400));
+        const scrollAmount = 300 + Math.random() * 200; // Vary scroll amount 300-500px
+        await this.page.evaluate((amount) => {
+          window.scrollBy({ top: amount, behavior: 'smooth' });
+        }, scrollAmount);
       }
 
-      await this.page.waitForTimeout(2000);
+      await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (error) {
       logger.warn(`Scroll error: ${error.message}`);
     }
