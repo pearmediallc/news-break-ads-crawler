@@ -28,6 +28,9 @@ class WorkerAdExtractor {
     this.maxConsecutiveErrors = 15; // Stop after 15 consecutive errors
     this.lastBrowserRestart = Date.now();
     this.totalDbAds = 0; // Track total ads saved to database
+    this.totalAdsExtracted = 0; // Track total ads extracted (for stats)
+    this.maxMemoryAds = 100; // Maximum ads to keep in memory (reduced from unlimited)
+    this.memoryWindowStart = 0; // Track which ads have been offloaded
   }
 
   async initialize() {
@@ -465,11 +468,27 @@ class WorkerAdExtractor {
       });
 
       if (newAds.length > 0) {
+        // Track total ads extracted
+        this.totalAdsExtracted += newAds.length;
+
         // ADD TO DATABASE FIRST - Primary storage
         await this.saveToDatabase(newAds);
 
-        // Add to memory for immediate processing (but limit size)
+        // Memory-efficient storage: Keep only recent ads in memory
         this.extractedAds.push(...newAds);
+
+        // Implement sliding window for memory management
+        if (this.extractedAds.length > this.maxMemoryAds) {
+          // Calculate how many ads to remove
+          const toRemove = this.extractedAds.length - this.maxMemoryAds;
+
+          // Remove oldest ads from memory (they're already saved to DB and file)
+          this.extractedAds.splice(0, toRemove);
+          this.memoryWindowStart += toRemove;
+
+          logger.debug(`🗑️ Removed ${toRemove} oldest ads from memory (already saved to DB)`);
+        }
+
         logger.info(`✨ Found ${newAds.length} new ads`);
         newAds.forEach(ad => {
           logger.info(`  📦 ${ad.advertiser || ad.adType}: ${ad.headline || 'No headline'}`);
@@ -478,10 +497,7 @@ class WorkerAdExtractor {
           }
         });
 
-        // NO ADS DELETION - All ads preserved in database and session
-        // Memory management done only through browser restarts and garbage collection
-
-        logger.info(`  Total in memory: ${this.extractedAds.length} ads`);
+        logger.info(`  Total extracted: ${this.totalAdsExtracted} | In memory: ${this.extractedAds.length} | In DB: ${this.totalDbAds}`);
 
         // Save to session file (with current memory state)
         await this.saveSession();
@@ -490,7 +506,7 @@ class WorkerAdExtractor {
         parentPort.postMessage({
           type: 'ads_update',
           data: {
-            totalAds: this.extractedAds.length, // Memory count
+            totalAds: this.totalAdsExtracted, // Total count (not just memory)
             newAds: newAds,
             latestAds: this.extractedAds.slice(-10),
             databaseSaved: true // Flag indicating DB save
@@ -647,18 +663,36 @@ class WorkerAdExtractor {
             '--disable-background-timer-throttling',
             '--disable-backgrounding-occluded-windows',
             '--disable-renderer-backgrounding',
-            '--max-old-space-size=4096', // Increase memory limit for long sessions
-            // Additional server/deployment flags
+
+            // MEMORY OPTIMIZATIONS for 512MB limit
+            '--max-old-space-size=256', // Reduced from 4096 to 256MB
+            '--js-flags=--max-old-space-size=256',
+            '--memory-pressure-off',
+            '--disable-shared-workers',
             '--disable-web-security',
+            '--disable-features=TranslateUI',
+            '--disable-features=BlinkGenPropertyTrees',
             '--disable-ipc-flooding-protection',
-            // Stability improvements
+            '--disable-background-networking',
+            '--disable-background-timer-throttling',
+            '--disable-renderer-backgrounding',
+            '--disable-features=site-per-process',
+            '--disable-features=IsolateOrigins',
+            '--single-process', // Run Chrome in single process mode (saves memory)
+            '--no-zygote', // Disable zygote process (saves memory)
+            '--disable-accelerated-2d-canvas',
+            '--disable-canvas-aa',
+            '--disable-2d-canvas-clip-aa',
+            '--disable-gl-drawing-for-tests',
+
+            // Additional server/deployment flags
             '--disable-crash-reporter',
             '--disable-software-rasterizer',
-            '--disable-background-networking',
             '--disable-sync',
             '--disable-translate',
             '--hide-scrollbars',
             '--mute-audio',
+
             // Remove problematic flags for Windows
             ...(isProduction ? [
               '--disable-gpu-sandbox',
@@ -821,6 +855,9 @@ class WorkerAdExtractor {
 
   async saveSession() {
     try {
+      // For memory efficiency, only save recent ads to file (all ads are in DB)
+      const adsToSave = this.extractedAds.slice(-100); // Keep only last 100 in file
+
       const sessionData = {
         sessionId: this.sessionTimestamp,
         startTime: this.sessionTimestamp,
@@ -829,10 +866,11 @@ class WorkerAdExtractor {
         deviceMode: workerData.deviceMode,
         extractionMode: workerData.extractionMode,
         endTime: new Date().toISOString(),
-        totalAds: this.extractedAds.length, // All ads in memory
+        totalAds: this.totalAdsExtracted, // Total extracted (accurate count)
         totalDbAds: this.totalDbAds, // Database count
-        ads: this.extractedAds, // ALL EXTRACTED ADS - NEVER TRUNCATED
-        note: 'All extracted ads preserved in session file'
+        adsInMemory: this.extractedAds.length, // Current memory count
+        ads: adsToSave, // Only recent ads in file (memory efficient)
+        note: `Showing last ${adsToSave.length} ads. Total ${this.totalAdsExtracted} ads extracted, ${this.totalDbAds} in database.`
       };
 
       await fs.writeJson(this.sessionFile, sessionData, { spaces: 2 });
@@ -1059,8 +1097,8 @@ class WorkerAdExtractor {
               logger.info(`  💾 Periodic save completed (Memory: ${this.extractedAds.length}, DB: ${this.totalDbAds})`);
             }
 
-            // MEMORY MANAGEMENT WITHOUT DATA DELETION
-            if (heapMB > 350 || totalMB > 450) { // Memory warning thresholds
+            // AGGRESSIVE MEMORY MANAGEMENT for 512MB limit
+            if (heapMB > 200 || totalMB > 350) { // Much lower thresholds for 512MB environment
               logger.warn(`⚠️ High memory usage detected: ${heapMB}MB heap, ${totalMB}MB total`);
               logger.info(`📊 Current data: ${this.extractedAds.length} ads in memory, ${this.totalDbAds} in database`);
 
@@ -1068,14 +1106,22 @@ class WorkerAdExtractor {
               await this.saveSession();
               logger.info(`💾 All data preserved in session and database`);
 
-              // Only garbage collection - NO DATA DELETION
+              // Aggressive memory cleanup
+              if (this.extractedAds.length > 50) {
+                // Keep only last 50 ads in memory
+                const toKeep = 50;
+                this.extractedAds = this.extractedAds.slice(-toKeep);
+                logger.info(`🗑️ Reduced memory ads to ${toKeep} most recent (all ads saved to DB)`);
+              }
+
+              // Force garbage collection
               if (global.gc) {
                 global.gc();
-                logger.info(`🗑️ Garbage collection performed - data preserved`);
+                logger.info(`🗑️ Garbage collection performed`);
               }
 
               // Force browser restart if memory is critically high
-              if (heapMB > 400 || totalMB > 500) {
+              if (heapMB > 250 || totalMB > 400) {
                 logger.warn(`🚨 Critical memory usage - forcing safe browser restart`);
                 try {
                   await this.restartBrowser();
@@ -1088,10 +1134,10 @@ class WorkerAdExtractor {
 
             // SAFE PERIODIC BROWSER RESTART for memory cleanup
             const browserUptime = Date.now() - this.lastBrowserRestart;
-            const restartInterval = 45 * 60 * 1000; // Restart every 45 minutes (less aggressive)
+            const restartInterval = 20 * 60 * 1000; // Restart every 20 minutes for 512MB limit
 
-            // Only restart if memory is getting high AND enough time has passed
-            const shouldRestart = browserUptime > restartInterval && (heapMB > 300 || totalMB > 400);
+            // Restart if enough time has passed AND memory is moderate
+            const shouldRestart = browserUptime > restartInterval && (heapMB > 150 || totalMB > 300);
 
             if (shouldRestart) {
               logger.info(`🔄 Safe browser restart scheduled (${Math.round(browserUptime/60000)} min uptime, ${heapMB}MB memory)`);

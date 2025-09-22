@@ -19,5 +19,5 @@ services:
     autoDeploy: true
     disk:
       name: data-storage
-      mountPath: /opt/render/project/src/data
+      mountPath: /usr/src/app/data
       sizeGB: 2
