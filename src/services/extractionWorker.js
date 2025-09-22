@@ -81,10 +81,16 @@ class WorkerAdExtractor {
           // Get ads from database for this session
           const sessionAds = await dbSync.db.getSessionAds(sessionData.sessionId);
 
-          // Rebuild seen ads set for deduplication
+          // Rebuild seen ads set for deduplication - use same normalization as extraction
           this.seenAds.clear();
           for (const ad of sessionAds) {
-            const key = `${ad.heading || ad.headline}_${ad.description || ad.body}_${ad.image_url || ad.image}_${ad.ad_network || ad.advertiser}`;
+            // Normalize to match the exact logic used in extraction
+            const headline = (ad.heading || ad.headline || '').trim().toLowerCase();
+            const body = (ad.description || ad.body || '').trim().toLowerCase().substring(0, 200);
+            const advertiser = (ad.ad_network || ad.advertiser || '').trim().toLowerCase();
+
+            // Same key format as used in extraction filter
+            const key = `${headline}_${body}_${advertiser}`;
             this.seenAds.add(key);
           }
 
@@ -164,8 +170,15 @@ class WorkerAdExtractor {
                   return;
                 }
 
-                // ORIGINAL LOGIC: Only extract ForYou containers with iframes
-                // Do NOT extract sponsored content without iframes
+                // Also check for sponsored content in ForYou containers even without iframes
+                const hasAdIndicators = container.querySelector('[class*="sponsor" i], [class*="promoted" i], [class*="ad-" i]') ||
+                                      container.textContent.toLowerCase().includes('sponsored') ||
+                                      container.textContent.toLowerCase().includes('promoted');
+
+                if (hasAdIndicators) {
+                  console.log('✅ ForYou container with ad indicators:', container.id || container.className);
+                  foundAds.push({ container, iframe: null, type: 'ForYou-Sponsored' });
+                }
               });
             } catch (e) {
               console.warn('Error with selector:', selector, e.message);
@@ -430,10 +443,24 @@ class WorkerAdExtractor {
         return extractedAds;
       }, extractionMode);
 
-      // Filter new ads
+      // Filter new ads with improved deduplication
       const newAds = ads.filter(ad => {
-        const key = `${ad.headline}_${ad.body}_${ad.image}_${ad.advertiser}`;
-        if (this.seenAds.has(key)) return false;
+        // Create normalized key for better duplicate detection
+        const headline = (ad.headline || '').trim().toLowerCase();
+        const body = (ad.body || '').trim().toLowerCase().substring(0, 200); // Use first 200 chars for comparison
+        const advertiser = (ad.advertiser || '').trim().toLowerCase();
+
+        // Use a combination of headline + body snippet + advertiser for deduplication
+        // This is more robust than using image URLs which might vary
+        const key = `${headline}_${body}_${advertiser}`;
+
+        if (this.seenAds.has(key)) {
+          // Log duplicate detection for debugging
+          if (headline || body) {
+            logger.debug(`  Duplicate ad skipped: ${advertiser} - ${headline.substring(0, 50)}`);
+          }
+          return false;
+        }
         this.seenAds.add(key);
         return true;
       });
@@ -1309,11 +1336,11 @@ class WorkerAdExtractor {
               logger.info(`💾 Session metadata saved`);
 
               // Clear deduplication set if it gets too large
-              if (this.seenAds.size > 1000) {
-                // Keep only last 500 entries for deduplication
+              if (this.seenAds.size > 5000) {
+                // Keep last 2500 entries for better deduplication
                 const seenArray = Array.from(this.seenAds);
-                this.seenAds = new Set(seenArray.slice(-500));
-                logger.info(`🗑️ Reduced deduplication set from ${seenArray.length} to 500 entries`);
+                this.seenAds = new Set(seenArray.slice(-2500));
+                logger.info(`🗑️ Reduced deduplication set from ${seenArray.length} to 2500 entries`);
               }
 
               // Clear recent ads if needed
