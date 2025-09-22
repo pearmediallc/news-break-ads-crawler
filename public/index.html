@@ -691,7 +691,18 @@
 
                     // Add new ads to the display dynamically
                     if (data.newAds && data.newAds.length > 0) {
-                        addNewAdsToDisplay(data.newAds);
+                        // Add new ads to our local data
+                        adsData = [...(adsData || []), ...data.newAds];
+
+                        // If we have a database session, load all ads from DB
+                        if (data.sessionId) {
+                            // Load all ads for this session from database
+                            loadSessionAdsFromDatabase(data.sessionId);
+                        } else {
+                            // Otherwise, add new ads to display
+                            addNewAdsToDisplay(data.newAds);
+                        }
+
                         showAlert('info', `🆕 ${data.newAds.length} new ads found!`);
                     } else if (data.latestAds && data.latestAds.length > 0) {
                         if (!hasDisplayedAds) {
@@ -760,6 +771,53 @@
             const logEntries = logsContainer.querySelectorAll('.log-entry');
             if (logEntries.length > 100) {
                 logEntries[0].remove();
+            }
+        }
+
+        async function loadSessionAdsFromDatabase(sessionId) {
+            try {
+                // Query all ads for this session from database
+                const response = await fetch('/api/query/ads/query', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        filters: { sessionIds: [sessionId] },
+                        sort: { field: 'timestamp', direction: 'DESC' },
+                        pagination: { limit: 10000, offset: 0 }
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    // Map database field names to frontend field names
+                    const mappedAds = result.data.map(dbAd => ({
+                        id: dbAd.id || dbAd.ad_id,
+                        advertiser: dbAd.ad_network || dbAd.advertiser || 'Unknown',
+                        headline: dbAd.heading || dbAd.headline || '',
+                        body: dbAd.description || dbAd.body || '',
+                        image: dbAd.image_url || dbAd.image || '',
+                        link: dbAd.link_url || dbAd.link || '',
+                        timestamp: dbAd.timestamp || dbAd.created_at || new Date().toISOString(),
+                        containerId: dbAd.session_id
+                    }));
+
+                    // Update global adsData and display
+                    adsData = mappedAds;
+                    displayAds(mappedAds);
+
+                    // Update stats
+                    const uniqueAdvertisers = new Set(mappedAds.map(ad => ad.advertiser).filter(a => a && a !== 'Unknown'));
+                    const adsWithLinks = mappedAds.filter(ad => ad.link).length;
+
+                    document.getElementById('totalAds').textContent = mappedAds.length;
+                    document.getElementById('uniqueAdvertisers').textContent = uniqueAdvertisers.size;
+                    document.getElementById('adsWithLinks').textContent = adsWithLinks;
+                }
+            } catch (error) {
+                console.error('Failed to load session ads from database:', error);
             }
         }
 

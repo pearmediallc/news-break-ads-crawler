@@ -639,9 +639,11 @@ function broadcastUpdate(data) {
 
           // Broadcast real-time updates
           if (message.type === 'ads_update') {
+            const extraction = backgroundExtractor.activeExtractions.get(extractionId);
             broadcastUpdate({
               type: 'new_ads',
               extractionId: extractionId,
+              sessionId: message.data.sessionId || extraction?.sessionId || null,
               newAds: message.data.newAds || [],
               totalAds: message.data.totalAds || 0,
               totalDbAds: message.data.totalDbAds || 0,

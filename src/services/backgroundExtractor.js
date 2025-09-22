@@ -313,6 +313,9 @@ class BackgroundExtractionService {
           logger.warn('Failed to sync ads to database:', error.message);
           // Don't let database errors stop the extraction
         }
+
+        // Add session ID to the data for UI
+        data.sessionId = extraction.sessionId;
         break;
 
       case 'session_created':
