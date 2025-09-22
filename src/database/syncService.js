@@ -17,16 +17,24 @@ class DatabaseSyncService {
       this.initialized = true;
       logger.info('Database sync service initialized');
     } catch (error) {
-      logger.error('Failed to initialize database sync service:', error);
-      throw error;
+      logger.error('Failed to initialize database sync service:', error.message);
+
+      // Don't throw - mark as not initialized
+      // This allows the extraction to continue with file-only storage
+      this.initialized = false;
+
+      logger.warn('Database sync service will be disabled - using file storage only');
+      logger.warn('Ads will still be saved to JSON session files');
     }
   }
 
   // Sync session data to database
   async syncSession(sessionData) {
     try {
+      // Skip if database is not initialized
       if (!this.initialized) {
-        await this.initialize();
+        logger.debug('Database not initialized, skipping session sync');
+        return;
       }
 
       // Check if session already exists
@@ -66,15 +74,18 @@ class DatabaseSyncService {
   // Sync ads to database
   async syncAds(ads, sessionId) {
     try {
+      // Skip if database is not initialized
       if (!this.initialized) {
-        await this.initialize();
+        logger.debug('Database not initialized, skipping ad sync');
+        return;
       }
 
       await this.db.saveAds(ads, sessionId);
       logger.info(`Synced ${ads.length} ads to database for session ${sessionId}`);
     } catch (error) {
-      logger.error('Failed to sync ads:', error);
-      throw error;
+      logger.error('Failed to sync ads:', error.message);
+      // Don't throw - allow extraction to continue
+      // Ads are still saved in JSON session files
     }
   }
 

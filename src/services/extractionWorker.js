@@ -772,25 +772,50 @@ class WorkerAdExtractor {
       const DatabaseSyncService = require('../database/syncService');
       const dbSync = new DatabaseSyncService();
 
-      // Force initialization with better error handling
-      await dbSync.initialize();
+      // Try to initialize with timeout
+      const initPromise = dbSync.initialize();
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Database initialization timeout')), 5000)
+      );
 
-      // Verify tables exist before saving
-      const testResult = await dbSync.db.db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='ads'");
-      if (!testResult) {
-        logger.warn('Ads table does not exist, reinitializing database schema...');
-        await dbSync.db.initializeSchema();
+      try {
+        await Promise.race([initPromise, timeoutPromise]);
+      } catch (initError) {
+        logger.warn(`Database initialization failed: ${initError.message}`);
+
+        // Try direct table creation as fallback
+        try {
+          if (dbSync.db && dbSync.db.db) {
+            await dbSync.db.createTablesDirectly();
+            logger.info('Created tables directly as fallback');
+          }
+        } catch (fallbackError) {
+          logger.warn(`Fallback table creation failed: ${fallbackError.message}`);
+          // Give up on database, continue with file storage only
+          return;
+        }
       }
 
-      await dbSync.syncAds(newAds, this.sessionTimestamp);
+      // Try to save ads
+      try {
+        await dbSync.syncAds(newAds, this.sessionTimestamp);
+        this.totalDbAds += newAds.length;
+        logger.info(`💾 Saved ${newAds.length} ads to database (total DB: ${this.totalDbAds})`);
+      } catch (saveError) {
+        logger.warn(`Failed to save ads to database: ${saveError.message}`);
+        // Continue - data is still saved in JSON files
+      }
 
-      this.totalDbAds += newAds.length;
-      logger.info(`💾 Saved ${newAds.length} ads to database (total DB: ${this.totalDbAds})`);
-
-      await dbSync.close();
+      // Try to close connection
+      try {
+        await dbSync.close();
+      } catch (closeError) {
+        // Ignore close errors
+      }
     } catch (error) {
-      logger.warn(`Database save failed: ${error.message}`);
+      logger.warn(`Database operation failed: ${error.message}`);
       // Continue without DB - don't crash extraction
+      // Data is still saved in JSON session files
     }
   }
 
