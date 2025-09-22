@@ -245,7 +245,7 @@ router.post('/ads/query', async (req, res) => {
     const {
       filters = {},
       sort = { field: 'timestamp', direction: 'DESC' },
-      pagination = { limit: 100, offset: 0 }
+      pagination = { limit: 10000, offset: 0 }  // Increased default limit to 10,000 for unlimited extraction
     } = req.body;
 
     console.log('📋 Query filters:', filters);

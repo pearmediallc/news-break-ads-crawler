@@ -1534,7 +1534,7 @@
                     body: JSON.stringify({
                         filters: filters,
                         sort: { field: 'timestamp', direction: 'DESC' },
-                        pagination: { limit: 10000, offset: 0 }
+                        pagination: { limit: 100000, offset: 0 }  // NO LIMIT - Request up to 100,000 ads
                     })
                 });
 

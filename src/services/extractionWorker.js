@@ -186,18 +186,18 @@ class WorkerAdExtractor {
             // Try common iframe selectors as fallback
             const fallbackIframes = document.querySelectorAll('iframe[src*="doubleclick"], iframe[src*="googlesyndication"], iframe[src*="amazon-adsystem"], iframe[class*="ad"], iframe[id*="ad"]');
 
-            fallbackIframes.forEach((iframe, index) => {
-              if (index < 10) { // Limit to 10 fallback ads per scan
-                const container = iframe.closest('div, section, article') || iframe.parentElement;
-                foundAds.push({ container, iframe, type: 'Fallback-Iframe' });
-              }
+            fallbackIframes.forEach((iframe) => {
+              // NO LIMIT - Extract ALL iframes found
+              const container = iframe.closest('div, section, article') || iframe.parentElement;
+              foundAds.push({ container, iframe, type: 'Fallback-Iframe' });
             });
 
             // Try looking for any sponsored content
             const sponsoredElements = document.querySelectorAll('[class*="sponsor" i], [class*="promoted" i], [data-ad], [data-sponsor]');
 
-            sponsoredElements.forEach((element, index) => {
-              if (index < 5 && !foundAds.find(ad => ad.container === element)) { // Limit to 5 sponsored elements
+            sponsoredElements.forEach((element) => {
+              // NO LIMIT - Extract ALL sponsored elements found
+              if (!foundAds.find(ad => ad.container === element)) {
                 foundAds.push({ container: element, iframe: null, type: 'Fallback-Sponsored' });
               }
             });
@@ -264,18 +264,18 @@ class WorkerAdExtractor {
             // Try common iframe selectors as fallback
             const fallbackIframes = document.querySelectorAll('iframe[src*="doubleclick"], iframe[src*="googlesyndication"], iframe[src*="amazon-adsystem"], iframe[class*="ad"], iframe[id*="ad"]');
 
-            fallbackIframes.forEach((iframe, index) => {
-              if (index < 10) { // Limit to 10 fallback ads per scan
-                const container = iframe.closest('div, section, article') || iframe.parentElement;
-                foundAds.push({ container, iframe, type: 'Fallback-Iframe' });
-              }
+            fallbackIframes.forEach((iframe) => {
+              // NO LIMIT - Extract ALL iframes found
+              const container = iframe.closest('div, section, article') || iframe.parentElement;
+              foundAds.push({ container, iframe, type: 'Fallback-Iframe' });
             });
 
             // Try looking for any sponsored content
             const sponsoredElements = document.querySelectorAll('[class*="sponsor" i], [class*="promoted" i], [data-ad], [data-sponsor]');
 
-            sponsoredElements.forEach((element, index) => {
-              if (index < 5 && !foundAds.find(ad => ad.container === element)) { // Limit to 5 sponsored elements
+            sponsoredElements.forEach((element) => {
+              // NO LIMIT - Extract ALL sponsored elements found
+              if (!foundAds.find(ad => ad.container === element)) {
                 foundAds.push({ container: element, iframe: null, type: 'Fallback-Sponsored' });
               }
             });
@@ -522,26 +522,86 @@ class WorkerAdExtractor {
           }
         });
       } else {
-        logger.info(`  No new ads found (${ads.length} total found, all duplicates)`);
-        logger.info(`  seenAds cache size: ${this.seenAds.size} entries`);
+        // Initialize counter if needed
+        if (this.consecutiveNoNewAds === undefined) {
+          this.consecutiveNoNewAds = 0;
+        }
+        this.consecutiveNoNewAds++;
 
-        // Enhanced logging for unlimited mode when no new ads are found
-        if (workerData.extractionMode === 'unlimited') {
+        // Different logging based on what we found
+        if (ads.length === 0) {
+          logger.info(`  No ads detected on page (seenAds: ${this.seenAds.size} entries)`);
+        } else if (ads.length === 1 && ads[0].body && ads[0].body.includes('Cross-origin')) {
+          logger.info(`  Only cross-origin iframe detected - page may not have loaded ads yet`);
+          logger.info(`  seenAds cache: ${this.seenAds.size} entries | Consecutive no-new: ${this.consecutiveNoNewAds}`);
+
+          // If we're only finding cross-origin iframes repeatedly, try different strategy
+          if (this.consecutiveNoNewAds > 5 && workerData.extractionMode === 'unlimited') {
+            logger.info(`💡 Attempting to trigger ad loading by interacting with page...`);
+
+            // Try to trigger ad loading by simulating user interaction
+            try {
+              await this.page.evaluate(() => {
+                // Click on body to trigger lazy loading
+                document.body.click();
+                // Trigger scroll event
+                window.dispatchEvent(new Event('scroll'));
+                // Focus window
+                window.focus();
+
+                // Try clicking on article links to navigate to content with ads
+                const articleLinks = document.querySelectorAll('a[href*="/news/"], a[href*="/article/"]');
+                if (articleLinks.length > 0 && Math.random() > 0.7) {
+                  const randomLink = articleLinks[Math.floor(Math.random() * Math.min(articleLinks.length, 5))];
+                  console.log('Clicking on article link:', randomLink.href);
+                  // Don't actually navigate, just trigger events
+                  randomLink.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+                }
+              });
+            } catch (interactionError) {
+              logger.debug(`Interaction attempt failed: ${interactionError.message}`);
+            }
+
+            // If stuck for too long, try navigating to a different section
+            if (this.consecutiveNoNewAds > 30 && this.consecutiveNoNewAds % 10 === 0) {
+              logger.info(`🔄 Attempting to navigate to different content section...`);
+              try {
+                const currentUrl = await this.page.url();
+                const baseUrl = new URL(currentUrl).origin;
+                const sections = ['/local', '/trending', '/national', '/entertainment', '/sports'];
+                const randomSection = sections[Math.floor(Math.random() * sections.length)];
+                const newUrl = `${baseUrl}${randomSection}`;
+
+                logger.info(`🌐 Navigating to: ${newUrl}`);
+                await this.page.goto(newUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+                // Reset counters after navigation
+                this.consecutiveNoNewAds = 0;
+                logger.info(`✅ Navigated to new section, resetting counters`);
+              } catch (navError) {
+                logger.warn(`Navigation to different section failed: ${navError.message}`);
+              }
+            }
+          }
+        } else {
+          logger.info(`  No new ads found (${ads.length} total found, all duplicates)`);
+          logger.info(`  seenAds cache: ${this.seenAds.size} entries`);
+
           // Log sample of what was found for debugging
           if (ads.length > 0) {
-            logger.info(`  Sample duplicate found: "${(ads[0].headline || ads[0].body || 'No content').substring(0, 40)}..."`);
+            const sample = ads[0];
+            logger.info(`  Sample duplicate: "${(sample.headline || sample.body || 'No content').substring(0, 40)}..."`);
           }
+        }
 
-          // If we haven't found new ads for a while in unlimited mode, it might indicate
-          // the page isn't refreshing with new content
-          if (this.consecutiveNoNewAds === undefined) {
-            this.consecutiveNoNewAds = 0;
-          }
-          this.consecutiveNoNewAds++;
+        // Warning for unlimited mode when stuck
+        if (workerData.extractionMode === 'unlimited' && this.consecutiveNoNewAds % 10 === 0) {
+          logger.warn(`⚠️ No new ads for ${this.consecutiveNoNewAds} consecutive extractions`);
 
-          if (this.consecutiveNoNewAds % 10 === 0) {
-            logger.warn(`⚠️ No new ads found for ${this.consecutiveNoNewAds} consecutive extractions in unlimited mode`);
-            logger.info(`💡 Page may need manual refresh or different content strategy`);
+          if (ads.length <= 1) {
+            logger.info(`💡 Try: 1) Different URL, 2) Clear cookies, 3) Check if ads are blocked`);
+          } else {
+            logger.info(`💡 Content may be exhausted or page needs different interaction`);
           }
         }
       }
@@ -555,6 +615,12 @@ class WorkerAdExtractor {
 
   async scrollAndWait() {
     try {
+      // Initialize refresh tracking
+      if (!this.lastPageRefresh) {
+        this.lastPageRefresh = Date.now();
+        this.refreshCount = 0;
+      }
+
       // Check current scroll position
       const scrollInfo = await this.page.evaluate(() => {
         const currentScroll = window.pageYOffset || document.documentElement.scrollTop;
@@ -562,53 +628,81 @@ class WorkerAdExtractor {
         return { currentScroll, maxScroll, atBottom: currentScroll >= maxScroll - 100 };
       });
 
+      // Calculate time since last refresh
+      const timeSinceRefresh = Date.now() - this.lastPageRefresh;
+      const MIN_REFRESH_INTERVAL = 60000; // Minimum 60 seconds between refreshes
+
       // Force refresh in unlimited mode if we haven't found new ads in a while
       const shouldForceRefresh = workerData.extractionMode === 'unlimited' &&
-                                this.consecutiveNoNewAds >= 15; // After 15 consecutive no-new-ads
+                                this.consecutiveNoNewAds >= 20 && // Increased threshold
+                                timeSinceRefresh > MIN_REFRESH_INTERVAL; // Respect minimum interval
 
-      if (scrollInfo.atBottom || shouldForceRefresh) {
-        if (shouldForceRefresh) {
-          logger.info(`🔄 Forcing page refresh due to ${this.consecutiveNoNewAds} consecutive extractions with no new ads`);
-        } else {
-          logger.info(`🔄 Reached bottom, refreshing page for new content...`);
-        }
-
-        try {
-          await this.page.reload({ waitUntil: 'networkidle2', timeout: 30000 });
-          logger.info(`✅ Page refreshed successfully`);
-
-          // Reset consecutive counter after refresh
+      if (scrollInfo.atBottom) {
+        // At bottom - decide if we should refresh or scroll back up
+        if (shouldForceRefresh || (this.refreshCount % 5 === 0 && timeSinceRefresh > MIN_REFRESH_INTERVAL)) {
           if (shouldForceRefresh) {
-            this.consecutiveNoNewAds = 0;
-            logger.info(`🔄 Reset consecutive no-new-ads counter after forced refresh`);
+            logger.info(`🔄 Forcing page refresh due to ${this.consecutiveNoNewAds} consecutive extractions with no new ads`);
+          } else {
+            logger.info(`🔄 Reached bottom, refreshing page for new content (refresh #${this.refreshCount + 1})`);
           }
-        } catch (reloadError) {
-          logger.warn(`⚠️ Reload failed, trying fallback: ${reloadError.message}`);
+
           try {
-            await this.page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
-            logger.info(`✅ Page refreshed with fallback`);
+            await this.page.reload({ waitUntil: 'networkidle2', timeout: 30000 });
+            logger.info(`✅ Page refreshed successfully`);
+
+            // Reset tracking
+            this.lastPageRefresh = Date.now();
+            this.refreshCount++;
 
             if (shouldForceRefresh) {
               this.consecutiveNoNewAds = 0;
+              logger.info(`🔄 Reset consecutive no-new-ads counter after forced refresh`);
             }
-          } catch (fallbackError) {
-            logger.error(`❌ Both reload attempts failed, continuing without refresh`);
+
+            // Scroll to top after refresh for fresh content
+            await this.page.evaluate(() => {
+              window.scrollTo(0, 0);
+            });
+            logger.info(`📍 Scrolled to top after refresh`);
+
+            // Longer wait after refresh to let content load
+            await new Promise(resolve => setTimeout(resolve, 8000));
+          } catch (reloadError) {
+            logger.warn(`⚠️ Reload failed: ${reloadError.message}`);
+            // Just scroll back up instead of failing
+            await this.page.evaluate(() => {
+              window.scrollTo(0, document.documentElement.scrollHeight / 2);
+            });
           }
+        } else {
+          // Scroll back to middle/top to continue extracting without refresh
+          logger.info(`📜 At bottom, scrolling back up to continue extraction`);
+          await this.page.evaluate(() => {
+            const randomPosition = Math.random() * (document.documentElement.scrollHeight / 2);
+            window.scrollTo(0, randomPosition);
+          });
+          await new Promise(resolve => setTimeout(resolve, 3000));
         }
-        await new Promise(resolve => setTimeout(resolve, 5000)); // Longer wait after refresh
       } else {
-        // Regular scroll
-        const scrollDistance = Math.floor(Math.random() * 800) + 400;
+        // Regular scroll down
+        const scrollDistance = Math.floor(Math.random() * 600) + 300; // Smaller scrolls
         await this.page.evaluate((distance) => {
           window.scrollBy(0, distance);
         }, scrollDistance);
-      }
 
-      // Wait for content to load (shorter wait for regular scrolling)
-      const waitTime = scrollInfo.atBottom || shouldForceRefresh ? 5000 : 3000 + Math.random() * 2000;
-      await new Promise(resolve => setTimeout(resolve, waitTime));
+        // Shorter wait for regular scrolling
+        await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 1000));
+      }
     } catch (error) {
       logger.warn(`Scroll error: ${error.message}`);
+      // Try to recover by scrolling to a safe position
+      try {
+        await this.page.evaluate(() => {
+          window.scrollTo(0, 100);
+        });
+      } catch (recoveryError) {
+        logger.error(`Failed to recover from scroll error: ${recoveryError.message}`);
+      }
     }
   }
 
@@ -942,9 +1036,9 @@ class WorkerAdExtractor {
         sessionId: this.sessionTimestamp
       });
 
-      // Keep only last 50 sessions to prevent file bloat
-      if (sessionsIndex.length > 50) {
-        sessionsIndex = sessionsIndex.slice(0, 50);
+      // Keep only last 100 sessions in index (but data is in database)
+      if (sessionsIndex.length > 100) {
+        sessionsIndex = sessionsIndex.slice(0, 100);
       }
 
       await fs.writeJson(sessionsIndexFile, sessionsIndex, { spaces: 2 });
@@ -1007,8 +1101,9 @@ class WorkerAdExtractor {
         data: { status: 'running' }
       });
 
+      // NO TIME LIMIT for unlimited mode
       const durationMs = workerData.extractionMode === 'unlimited' ?
-        Infinity :
+        Infinity :  // Will run forever in unlimited mode
         (workerData.duration || 5) * 60 * 1000;
 
       let extractionCount = 0;
@@ -1211,15 +1306,15 @@ class WorkerAdExtractor {
             }
 
             // SEENADS CACHE OPTIMIZATION (preserve essential deduplication)
-            if (this.seenAds.size > 5000) { // Reduced threshold for more frequent cleanup
+            if (this.seenAds.size > 10000) { // Higher threshold for unlimited extraction
               logger.info(`📋 seenAds cache optimization: ${this.seenAds.size} entries`);
 
               try {
                 // DON'T CLEAR COMPLETELY - Keep most recent entries for deduplication
                 const seenArray = Array.from(this.seenAds);
 
-                // Keep last 2000 entries for deduplication (most recent ads)
-                const recentEntries = seenArray.slice(-2000);
+                // Keep last 5000 entries for deduplication (most recent ads)
+                const recentEntries = seenArray.slice(-5000);
                 this.seenAds = new Set(recentEntries);
 
                 logger.info(`  🗑️ Reduced seenAds cache from ${seenArray.length} to ${this.seenAds.size} entries`);
