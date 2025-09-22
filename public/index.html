@@ -1290,6 +1290,21 @@
             }
         }
 
+        // Update stats from ads array
+        function updateStats(ads) {
+            if (!ads || !Array.isArray(ads)) return;
+
+            const uniqueAdvertisers = new Set(ads.map(ad =>
+                ad.advertiser || ad.ad_network || 'Unknown'
+            ).filter(a => a && a !== 'Unknown'));
+
+            const adsWithLinks = ads.filter(ad => ad.link || ad.link_url).length;
+
+            document.getElementById('totalAds').textContent = ads.length;
+            document.getElementById('uniqueAdvertisers').textContent = uniqueAdvertisers.size;
+            document.getElementById('adsWithLinks').textContent = adsWithLinks;
+        }
+
         async function createNewSession() {
             try {
                 const response = await fetch('/api/sessions/new', {
@@ -1368,24 +1383,45 @@
                 const result = await response.json();
 
                 if (result.success) {
-                    adsData = result.data;
-                    displayAds(result.data);
-                    updateStats(result.data);
+                    // Map database field names to frontend field names
+                    const mappedAds = result.data.map(dbAd => ({
+                        id: dbAd.id || dbAd.ad_id,
+                        advertiser: dbAd.ad_network || dbAd.advertiser || 'Unknown',
+                        headline: dbAd.heading || dbAd.headline || '',
+                        body: dbAd.description || dbAd.body || '',
+                        image: dbAd.image_url || dbAd.image || '',
+                        link: dbAd.link_url || dbAd.link || '',
+                        timestamp: dbAd.timestamp || dbAd.created_at || new Date().toISOString(),
+                        // Keep original fields for reference
+                        containerId: dbAd.session_id,
+                        iframeSize: dbAd.width && dbAd.height ? `${dbAd.width}x${dbAd.height}` : ''
+                    }));
+
+                    adsData = mappedAds;
+                    displayAds(mappedAds);
+
+                    // Update stats properly
+                    const uniqueAdvertisers = new Set(mappedAds.map(ad => ad.advertiser).filter(a => a && a !== 'Unknown'));
+                    const adsWithLinks = mappedAds.filter(ad => ad.link).length;
+
+                    document.getElementById('totalAds').textContent = mappedAds.length;
+                    document.getElementById('uniqueAdvertisers').textContent = uniqueAdvertisers.size;
+                    document.getElementById('adsWithLinks').textContent = adsWithLinks;
 
                     // Clear session selector to indicate we're viewing all data
                     document.getElementById('sessionSelector').value = '';
 
                     // Update session info to show database mode
                     document.getElementById('currentSessionInfo').textContent =
-                        `(Database Mode: ${result.data.length} total ads)`;
+                        `(Database Mode: ${mappedAds.length} total ads)`;
 
-                    showAlert('success', `Loaded ${result.data.length} ads from database`);
+                    showAlert('success', `Loaded ${mappedAds.length} ads from database`);
                 } else {
-                    showAlert('error', 'Failed to load ads from database');
+                    showAlert('error', result.error || 'Failed to load ads from database');
                 }
             } catch (error) {
                 console.error('Failed to load all ads from database:', error);
-                showAlert('error', 'Failed to load ads from database');
+                showAlert('error', 'Failed to load ads from database: ' + error.message);
             } finally {
                 document.getElementById('adsLoading').classList.remove('active');
             }
