@@ -486,6 +486,9 @@ class WorkerAdExtractor {
       });
 
       if (newAds.length > 0) {
+        // Reset consecutive no-new-ads counter
+        this.consecutiveNoNewAds = 0;
+
         // Track total ads extracted
         this.totalAdsExtracted += newAds.length;
 
@@ -519,7 +522,28 @@ class WorkerAdExtractor {
           }
         });
       } else {
-        logger.info(`  No new ads found`);
+        logger.info(`  No new ads found (${ads.length} total found, all duplicates)`);
+        logger.info(`  seenAds cache size: ${this.seenAds.size} entries`);
+
+        // Enhanced logging for unlimited mode when no new ads are found
+        if (workerData.extractionMode === 'unlimited') {
+          // Log sample of what was found for debugging
+          if (ads.length > 0) {
+            logger.info(`  Sample duplicate found: "${(ads[0].headline || ads[0].body || 'No content').substring(0, 40)}..."`);
+          }
+
+          // If we haven't found new ads for a while in unlimited mode, it might indicate
+          // the page isn't refreshing with new content
+          if (this.consecutiveNoNewAds === undefined) {
+            this.consecutiveNoNewAds = 0;
+          }
+          this.consecutiveNoNewAds++;
+
+          if (this.consecutiveNoNewAds % 10 === 0) {
+            logger.warn(`⚠️ No new ads found for ${this.consecutiveNoNewAds} consecutive extractions in unlimited mode`);
+            logger.info(`💡 Page may need manual refresh or different content strategy`);
+          }
+        }
       }
 
       return newAds.length;
@@ -538,22 +562,40 @@ class WorkerAdExtractor {
         return { currentScroll, maxScroll, atBottom: currentScroll >= maxScroll - 100 };
       });
 
-      if (scrollInfo.atBottom) {
-        // At bottom, refresh page for new content
-        logger.info(`🔄 Reached bottom, refreshing page for new content...`);
+      // Force refresh in unlimited mode if we haven't found new ads in a while
+      const shouldForceRefresh = workerData.extractionMode === 'unlimited' &&
+                                this.consecutiveNoNewAds >= 15; // After 15 consecutive no-new-ads
+
+      if (scrollInfo.atBottom || shouldForceRefresh) {
+        if (shouldForceRefresh) {
+          logger.info(`🔄 Forcing page refresh due to ${this.consecutiveNoNewAds} consecutive extractions with no new ads`);
+        } else {
+          logger.info(`🔄 Reached bottom, refreshing page for new content...`);
+        }
+
         try {
           await this.page.reload({ waitUntil: 'networkidle2', timeout: 30000 });
           logger.info(`✅ Page refreshed successfully`);
+
+          // Reset consecutive counter after refresh
+          if (shouldForceRefresh) {
+            this.consecutiveNoNewAds = 0;
+            logger.info(`🔄 Reset consecutive no-new-ads counter after forced refresh`);
+          }
         } catch (reloadError) {
           logger.warn(`⚠️ Reload failed, trying fallback: ${reloadError.message}`);
           try {
             await this.page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
             logger.info(`✅ Page refreshed with fallback`);
+
+            if (shouldForceRefresh) {
+              this.consecutiveNoNewAds = 0;
+            }
           } catch (fallbackError) {
             logger.error(`❌ Both reload attempts failed, continuing without refresh`);
           }
         }
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        await new Promise(resolve => setTimeout(resolve, 5000)); // Longer wait after refresh
       } else {
         // Regular scroll
         const scrollDistance = Math.floor(Math.random() * 800) + 400;
@@ -562,8 +604,9 @@ class WorkerAdExtractor {
         }, scrollDistance);
       }
 
-      // Wait for content to load
-      await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
+      // Wait for content to load (shorter wait for regular scrolling)
+      const waitTime = scrollInfo.atBottom || shouldForceRefresh ? 5000 : 3000 + Math.random() * 2000;
+      await new Promise(resolve => setTimeout(resolve, waitTime));
     } catch (error) {
       logger.warn(`Scroll error: ${error.message}`);
     }
@@ -1167,18 +1210,24 @@ class WorkerAdExtractor {
               }
             }
 
-            // SEENADS CACHE OPTIMIZATION (without deleting extracted ads)
-            if (this.seenAds.size > 8000) { // Higher threshold for cache management
-              logger.info(`📋 seenAds cache optimization: ${this.seenAds.size} entries (preserving all data)`);
+            // SEENADS CACHE OPTIMIZATION (preserve essential deduplication)
+            if (this.seenAds.size > 5000) { // Reduced threshold for more frequent cleanup
+              logger.info(`📋 seenAds cache optimization: ${this.seenAds.size} entries`);
 
-              // Only reduce seenAds cache for memory, but keep all extracted ads
-              // Rebuild seenAds from recent ads for duplicate detection efficiency
-              // Rebuild seen ads from database if needed
-              const recentAdsCount = Math.min(this.totalAdsExtracted, 2000);
-              this.seenAds.clear();
+              try {
+                // DON'T CLEAR COMPLETELY - Keep most recent entries for deduplication
+                const seenArray = Array.from(this.seenAds);
 
-              // Keep partial deduplication only
-              logger.info(`  ✅ seenAds cache will be rebuilt on next extraction`);
+                // Keep last 2000 entries for deduplication (most recent ads)
+                const recentEntries = seenArray.slice(-2000);
+                this.seenAds = new Set(recentEntries);
+
+                logger.info(`  🗑️ Reduced seenAds cache from ${seenArray.length} to ${this.seenAds.size} entries`);
+                logger.info(`  ✅ Deduplication maintained with recent ${this.seenAds.size} ad signatures`);
+              } catch (error) {
+                logger.error(`seenAds optimization failed: ${error.message}`);
+                // If optimization fails, just continue - better than stopping
+              }
             }
           }
         }
