@@ -519,102 +519,94 @@ class ForYouAdExtractor {
         const ads = await this.page.evaluate(() => {
             const foundAds = [];
 
-            // Look for multiple possible ad container patterns
-            // Pattern 1: ForYou containers - Enhanced selectors for better detection
-            document.querySelectorAll('[id^="ForYou"], [id*="ForYou" i], [id*="foryou" i], [id*="for-you" i], [class*="ForYou"], [class*="for-you"], [class*="foryou" i], div[class*="ForYou"], div[class*="for-you"], section[class*="ForYou"], section[class*="for-you"]').forEach(container => {
-                console.log('Found ForYou container:', container.id);
-                const iframe = container.querySelector('iframe');
-                if (iframe) {
-                    console.log('  - Has iframe:', iframe.src || 'no src');
-                    foundAds.push({ container, iframe, type: 'ForYou' });
-                } else {
-                    // Even without iframe, might still be an ad
-                    const hasAdContent = container.querySelector('[class*="sponsor"], [class*="promoted"], [class*="ad"], [class*="Sponsor"], [class*="Promoted"]');
-                    if (hasAdContent) {
-                        console.log('  - Has sponsored content');
-                        foundAds.push({ container, iframe: null, type: 'ForYou-NoIframe' });
+            // ONLY EXTRACT FROM FORYOU CONTAINERS - these are the dynamic ad containers
+            // Focus exclusively on ForYou pattern as these contain the dynamically updated ads
+            const forYouSelectors = [
+                '[id^="ForYou-"]',           // IDs starting with ForYou-
+                '[id*="ForYou"]',             // IDs containing ForYou
+                '[class*="ForYou"]',          // Classes containing ForYou
+                '[class*="for-you"]',         // Classes with for-you
+                'div[id*="foryou" i]',        // Divs with foryou (case insensitive)
+                'div[class*="foryou" i]',     // Divs with foryou class (case insensitive)
+                '.ForYou',                    // Direct ForYou class
+                '#ForYou'                     // Direct ForYou ID
+            ];
+
+            // Query all ForYou containers
+            const forYouContainers = document.querySelectorAll(forYouSelectors.join(', '));
+
+            console.log(`Found ${forYouContainers.length} ForYou containers`);
+
+            forYouContainers.forEach(container => {
+                // Each ForYou container represents a potential ad slot
+                const containerId = container.id || container.className || 'unnamed';
+                console.log(`Processing ForYou container: ${containerId}`);
+
+                // Check if this container has content (not empty)
+                const hasContent = container.textContent.trim().length > 0 ||
+                                 container.querySelector('iframe') ||
+                                 container.querySelector('img');
+
+                if (hasContent) {
+                    // Look for iframe inside (most ads have iframes)
+                    const iframe = container.querySelector('iframe');
+
+                    // This is definitely an ad container if it has an iframe or sponsored content
+                    const isAd = iframe ||
+                               container.querySelector('[class*="sponsor" i], [class*="promoted" i], [class*="ad" i]') ||
+                               container.textContent.toLowerCase().includes('sponsor') ||
+                               container.textContent.toLowerCase().includes('promoted');
+
+                    if (isAd || iframe) {
+                        console.log(`  ✓ Ad detected in ForYou container: ${containerId}`);
+                        foundAds.push({
+                            container,
+                            iframe,
+                            type: 'ForYou',
+                            containerId: containerId
+                        });
+                    } else if (hasContent) {
+                        // Even without clear ad indicators, ForYou containers often have ads
+                        // Check if it has substantial content
+                        const hasSubstantialContent = container.querySelector('h1, h2, h3, h4, h5, h6, p') ||
+                                                     container.querySelector('img') ||
+                                                     container.textContent.trim().length > 50;
+
+                        if (hasSubstantialContent) {
+                            console.log(`  ? Possible ad in ForYou container: ${containerId}`);
+                            foundAds.push({
+                                container,
+                                iframe: null,
+                                type: 'ForYou-Content',
+                                containerId: containerId
+                            });
+                        }
                     }
+                } else {
+                    console.log(`  - Empty ForYou container: ${containerId}`);
                 }
             });
 
-            // Pattern 2: Any iframes with mspai class (common ad iframe class)
-            document.querySelectorAll('iframe[class*="mspai"], iframe[class*="nova"], iframe[id*="google_ads"], iframe[name*="google_ads"], iframe[src*="doubleclick"], iframe[src*="googlesyndication"]').forEach(iframe => {
-                // Check if not already captured
-                if (!foundAds.find(ad => ad.iframe === iframe)) {
-                    console.log('Found ad iframe:', iframe.className || iframe.id || 'unnamed');
-                    foundAds.push({ container: iframe.parentElement, iframe, type: 'AdNetwork' });
-                }
-            });
-
-            // Pattern 3: Generic iframes that might be ads
-            document.querySelectorAll('iframe').forEach(iframe => {
-                // Skip if already processed
-                if (foundAds.find(ad => ad.iframe === iframe)) return;
-
-                const src = iframe.src || '';
-                const className = iframe.className || '';
-                const id = iframe.id || '';
-
-                // Common ad indicators
-                if (src.includes('ad') || src.includes('sponsor') ||
-                    className.includes('ad') || className.includes('sponsor') ||
-                    id.includes('ad') || id.includes('sponsor')) {
-                    console.log('Found generic ad iframe:', src.substring(0, 50));
-                    foundAds.push({ container: iframe.parentElement, iframe, type: 'Generic' });
-                }
-            });
-
-            // Pattern 4: Divs with sponsored content indicators - More aggressive
-            document.querySelectorAll('[class*="sponsor" i], [class*="promoted" i], [class*="ad-" i], [class*="advertisement" i], [data-ad], [data-sponsor], [data-promoted], div[class*="taboola"], div[class*="outbrain"], div[id*="taboola"], div[id*="outbrain"]').forEach(container => {
-                // Skip if already processed
-                if (!foundAds.find(ad => ad.container === container)) {
-                    console.log('Found sponsored container:', container.className || container.id || container.tagName);
-                    foundAds.push({ container, iframe: null, type: 'Sponsored' });
-                }
-            });
-
-            // Pattern 5: Native ads that look like articles but are sponsored
-            document.querySelectorAll('article, div[class*="card"], div[class*="post"], div[class*="item"]').forEach(article => {
-                // Skip if already processed
-                if (foundAds.find(ad => ad.container === article)) return;
-
-                // Check if it's a sponsored article
-                const sponsorText = article.textContent.toLowerCase();
-                const hasSponsored = sponsorText.includes('sponsored') ||
-                                   sponsorText.includes('promoted') ||
-                                   sponsorText.includes('advertisement') ||
-                                   sponsorText.includes('partner content');
-
-                // Check for sponsor labels within the article
-                const sponsorEl = article.querySelector('span, div');
-                const hasSponsorLabel = sponsorEl && (
-                    sponsorEl.textContent.toLowerCase().includes('sponsor') ||
-                    sponsorEl.textContent.toLowerCase().includes('promoted')
-                );
-
-                if (hasSponsored || hasSponsorLabel) {
-                    console.log('Found native ad article');
-                    foundAds.push({ container: article, iframe: null, type: 'NativeAd' });
-                }
-            });
+            // NO OTHER PATTERNS - ONLY FORYOU CONTAINERS
+            // Removed all other patterns to focus exclusively on ForYou containers
 
             console.log(`Total potential ads found: ${foundAds.length}`);
 
             const extractedAds = [];
-            foundAds.forEach(({ container, iframe, type }) => {
+            foundAds.forEach(({ container, iframe, type, containerId }) => {
                 if (!container && !iframe) return;
 
                 const adData = {
                     id: `ad_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                     timestamp: new Date().toISOString(),
-                    containerId: container ? container.id : 'no-container',
+                    containerId: containerId || (container ? container.id : 'no-container'),
                     adType: type,
                     advertiser: '',
                     headline: '',
                     body: '',
                     image: '',
                     link: '',
-                    iframeSize: iframe ? `${iframe.width}x${iframe.height}` : 'N/A',
+                    iframeSize: iframe ? `${iframe.width || 'auto'}x${iframe.height || 'auto'}` : 'N/A',
                     iframeSrc: iframe ? (iframe.src || '') : ''
                 };
 
@@ -724,15 +716,129 @@ class ForYouAdExtractor {
                         }
                     }
                 } catch (e) {
-                    // Cross-origin iframe or error
-                    if (iframe) {
-                        adData.advertiser = 'Protected Ad';
-                        adData.headline = 'Cross-origin iframe';
-                        adData.body = `Cannot access content (${adData.iframeSize})`;
+                    // Cross-origin iframe - extract from surrounding ForYou container instead
+                    if (iframe && container) {
+                        // ForYou containers are dynamic ad slots - extract ALL visible content
+                        // The ads load dynamically and content changes frequently
 
-                        // For cross-origin, try to extract URL from iframe src
-                        if (iframe.src && iframe.src.includes('http')) {
-                            adData.link = iframe.src;
+                        // Look for text content in the ForYou container (but not inside the iframe)
+                        const containerClone = container.cloneNode(true);
+                        // Remove the iframe from our clone to avoid confusion
+                        const iframeClone = containerClone.querySelector('iframe');
+                        if (iframeClone) iframeClone.remove();
+
+                        // Extract ALL text elements from the container
+                        const allTexts = [];
+                        const textElements = containerClone.querySelectorAll('h1, h2, h3, h4, h5, h6, p, span, div, a, strong, b');
+
+                        // Collect all text content
+                        for (const el of textElements) {
+                            const text = el.textContent.trim();
+                            if (text && text.length > 5) {
+                                // Skip common UI elements
+                                if (!text.match(/^(Share|Comment|Like|Follow|Subscribe|Menu|Close|Next|Previous)$/i)) {
+                                    allTexts.push({
+                                        text: text,
+                                        tag: el.tagName,
+                                        fontSize: el.style.fontSize || '',
+                                        fontWeight: el.style.fontWeight || '',
+                                        isHeading: el.tagName.match(/^H[1-6]$/) ? true : false
+                                    });
+                                }
+                            }
+                        }
+
+                        // Sort texts by likely importance (headings first, then by length)
+                        allTexts.sort((a, b) => {
+                            if (a.isHeading && !b.isHeading) return -1;
+                            if (!a.isHeading && b.isHeading) return 1;
+                            return b.text.length - a.text.length;
+                        });
+
+                        // Extract headline, body, and advertiser
+                        for (const item of allTexts) {
+                            const text = item.text;
+
+                            // Headlines are typically short and prominent
+                            if (!adData.headline && text.length > 10 && text.length < 150) {
+                                if (item.isHeading || item.fontWeight === 'bold' || item.fontSize.includes('large')) {
+                                    adData.headline = text;
+                                }
+                            }
+
+                            // Body text is typically longer
+                            else if (!adData.body && text.length > 30 && text.length < 500) {
+                                // Skip if it's the same as headline
+                                if (!adData.headline || !text.includes(adData.headline)) {
+                                    adData.body = text;
+                                }
+                            }
+
+                            // Look for advertiser patterns
+                            else if (!adData.advertiser) {
+                                if (text.match(/^(by|By|Sponsored by|Promoted by|From)\s+/i)) {
+                                    adData.advertiser = text.replace(/^(by|By|Sponsored by|Promoted by|From)\s*/i, '');
+                                } else if (text.length < 50 && (text.includes('Sponsored') || text.includes('Promoted'))) {
+                                    adData.advertiser = text.replace(/(Sponsored|Promoted|Advertisement)/gi, '').trim();
+                                }
+                            }
+                        }
+
+                        // Look for advertiser in specific locations
+                        const sponsorElement = container.querySelector('[class*="sponsor" i], [class*="advertiser" i], [class*="promoted" i]');
+                        if (sponsorElement && !adData.advertiser) {
+                            adData.advertiser = sponsorElement.textContent.trim().replace(/^(by|By|Sponsored by|Promoted by)\s*/i, '');
+                        }
+
+                        // Also check for "by" text pattern in spans
+                        if (!adData.advertiser) {
+                            const allSpans = container.querySelectorAll('span');
+                            for (const span of allSpans) {
+                                const spanText = span.textContent.trim();
+                                if (spanText.match(/^(by|By|Sponsored by|Promoted by)\s+/i)) {
+                                    adData.advertiser = spanText.replace(/^(by|By|Sponsored by|Promoted by)\s*/i, '');
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Look for images in the container (not in iframe)
+                        const containerImg = container.querySelector('img:not(iframe img)');
+                        if (containerImg && containerImg.src && !adData.image) {
+                            adData.image = containerImg.src;
+                        }
+
+                        // Look for links in the container
+                        const containerLink = container.querySelector('a[href]:not(iframe a)');
+                        if (containerLink && containerLink.href && !adData.link) {
+                            adData.link = containerLink.href;
+                        }
+
+                        // If still no content, use container ID as unique identifier
+                        if (!adData.headline && !adData.body && !adData.advertiser) {
+                            // Extract any visible text from the container
+                            const visibleText = containerClone.textContent.trim().substring(0, 200);
+                            if (visibleText && visibleText.length > 20) {
+                                adData.body = visibleText;
+                                adData.advertiser = `ForYou-${container.id || 'Ad'}`;
+                            } else {
+                                // Last resort - use iframe details
+                                adData.advertiser = 'Sponsored Content';
+                                adData.headline = `ForYou Ad ${container.id || ''}`;
+                                adData.body = `Ad container (${adData.iframeSize})`;
+                            }
+                        }
+
+                        // Add iframe src as additional data
+                        if (iframe.src) {
+                            adData.iframeSrc = iframe.src;
+                            // Try to extract domain from iframe src as advertiser hint
+                            if (!adData.advertiser || adData.advertiser === 'Sponsored Content') {
+                                const srcUrl = new URL(iframe.src);
+                                if (srcUrl.hostname && !srcUrl.hostname.includes('newsbreak')) {
+                                    adData.advertiser = srcUrl.hostname.replace('www.', '').split('.')[0];
+                                }
+                            }
                         }
                     }
                 }
@@ -769,13 +875,28 @@ class ForYouAdExtractor {
             return extractedAds;
         });
 
-        // Filter duplicates
+        // Filter duplicates - use more specific key for ForYou ads
         const newAds = [];
         for (const ad of ads) {
-            const key = `${ad.advertiser}_${ad.headline}_${ad.body}`;
+            // Create a more unique key that includes container ID for ForYou ads
+            let key = `${ad.advertiser}_${ad.headline}_${ad.body}`;
+
+            // For ForYou ads, include container ID to avoid false duplicates
+            if (ad.adType === 'ForYou' && ad.containerId) {
+                key = `${ad.containerId}_${ad.advertiser}_${ad.headline}`;
+            }
+
+            // For ads with minimal content, use iframe src as part of key
+            if ((!ad.headline || !ad.body) && ad.iframeSrc) {
+                key = `${ad.advertiser}_${ad.iframeSrc}`;
+            }
+
             if (!this.seenAds.has(key)) {
                 this.seenAds.add(key);
                 newAds.push(ad);
+                logger.info(`✅ New ad extracted: ${ad.advertiser || 'Unknown'} - ${ad.headline || ad.body || ad.containerId || 'ForYou Ad'}`);
+            } else {
+                logger.debug(`Duplicate ad skipped: ${ad.advertiser} - ${ad.headline}...`);
             }
         }
 
