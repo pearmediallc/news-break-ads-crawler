@@ -719,11 +719,27 @@ class WorkerAdExtractor {
   async scrollAndWait() {
     try {
       const scrollInfo = await this.page.evaluate(() => {
-        const scrollY = window.pageYOffset;
-        const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+        const scrollY = window.pageYOffset || window.scrollY;
+        const windowHeight = window.innerHeight;
+        const documentHeight = Math.max(
+          document.body.scrollHeight,
+          document.body.offsetHeight,
+          document.documentElement.clientHeight,
+          document.documentElement.scrollHeight,
+          document.documentElement.offsetHeight
+        );
+        const maxScroll = documentHeight - windowHeight;
         const isAtBottom = scrollY >= maxScroll - 50;
-        return { scrollY, maxScroll, isAtBottom };
+
+        // Debug info
+        console.log(`Scroll position: ${scrollY}/${maxScroll} (${Math.round(scrollY/maxScroll*100)}%), At bottom: ${isAtBottom}`);
+
+        return { scrollY, maxScroll, isAtBottom, documentHeight, windowHeight };
       });
+
+      // Log scroll position
+      const scrollPercentage = Math.round((scrollInfo.scrollY / scrollInfo.maxScroll) * 100) || 0;
+      logger.debug(`📍 Scroll: ${scrollPercentage}% (${scrollInfo.scrollY}/${scrollInfo.maxScroll}px), At bottom: ${scrollInfo.isAtBottom}`);
 
       if (scrollInfo.isAtBottom) {
         // At bottom - use same refresh logic as ads-logic folder

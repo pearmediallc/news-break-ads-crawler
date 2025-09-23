@@ -688,6 +688,21 @@
                         updateAdCount(data.totalAds);
                     }
 
+                    // Force refresh the ads display with latest data
+                    if (data.newAds && data.newAds.length > 0) {
+                        console.log(`📦 Received ${data.newAds.length} new ads via SSE`);
+
+                        // Add new ads to the existing adsData array
+                        if (!adsData) adsData = [];
+                        adsData.push(...data.newAds);
+
+                        // Redisplay all ads (including new ones)
+                        displayAds(adsData);
+                        updateStats(adsData);
+
+                        showAlert('success', `${data.newAds.length} new ads extracted`);
+                    }
+
                     // Check if we need to display ads
                     const adsGrid = document.getElementById('adsGrid');
                     const hasDisplayedAds = adsGrid && adsGrid.children.length > 0 && !adsGrid.innerHTML.includes('No ads found');
@@ -1440,11 +1455,42 @@
         async function refreshAds() {
             const sessionSelector = document.getElementById('sessionSelector');
             const currentSession = sessionSelector.value;
-            await loadAds(currentSession);
-            await loadStats();
-            await loadSessions();
-            updateSessionInfo();
-            showAlert('success', 'Data refreshed successfully');
+
+            // Force reload from server, not cache
+            try {
+                // If there's a current session, load from it
+                if (currentSession) {
+                    const response = await fetch(`/api/ads?session=${currentSession}&t=${Date.now()}`);
+                    adsData = await response.json();
+                } else {
+                    // Load from current session file
+                    const currentSessionResponse = await fetch(`/api/sessions/current?t=${Date.now()}`);
+                    const currentSessionData = await currentSessionResponse.json();
+
+                    if (currentSessionData && currentSessionData.sessionFile) {
+                        const response = await fetch(`/api/ads?session=${currentSessionData.sessionFile}&t=${Date.now()}`);
+                        adsData = await response.json();
+                    } else {
+                        // Fallback to default
+                        const response = await fetch(`/api/ads?t=${Date.now()}`);
+                        adsData = await response.json();
+                    }
+                }
+
+                // Display the refreshed ads
+                displayAds(adsData);
+                updateStats(adsData);
+
+                // Update other UI elements
+                await loadStats();
+                await loadSessions();
+                updateSessionInfo();
+
+                showAlert('success', `Data refreshed - ${adsData.length} ads loaded`);
+            } catch (error) {
+                console.error('Failed to refresh ads:', error);
+                showAlert('error', 'Failed to refresh ads data');
+            }
         }
 
         async function refreshNewAds() {
