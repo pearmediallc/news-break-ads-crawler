@@ -718,6 +718,11 @@ class WorkerAdExtractor {
 
   async scrollAndWait() {
     try {
+      // Initialize scroll direction if not set
+      if (this.scrollDirection === undefined) {
+        this.scrollDirection = 'down'; // Start by scrolling down
+      }
+
       const scrollInfo = await this.page.evaluate(() => {
         const scrollY = window.pageYOffset || window.scrollY;
         const windowHeight = window.innerHeight;
@@ -730,97 +735,133 @@ class WorkerAdExtractor {
         );
         const maxScroll = documentHeight - windowHeight;
         const isAtBottom = scrollY >= maxScroll - 50;
+        const isAtTop = scrollY <= 50;
 
         // Debug info
-        console.log(`Scroll position: ${scrollY}/${maxScroll} (${Math.round(scrollY/maxScroll*100)}%), At bottom: ${isAtBottom}`);
+        console.log(`Scroll: ${scrollY}/${maxScroll} (${Math.round(scrollY/maxScroll*100)}%), Top: ${isAtTop}, Bottom: ${isAtBottom}`);
 
-        return { scrollY, maxScroll, isAtBottom, documentHeight, windowHeight };
+        return { scrollY, maxScroll, isAtBottom, isAtTop, documentHeight, windowHeight };
       });
 
       // Log scroll position
       const scrollPercentage = Math.round((scrollInfo.scrollY / scrollInfo.maxScroll) * 100) || 0;
-      logger.debug(`📍 Scroll: ${scrollPercentage}% (${scrollInfo.scrollY}/${scrollInfo.maxScroll}px), At bottom: ${scrollInfo.isAtBottom}`);
+      logger.debug(`📍 Scroll: ${scrollPercentage}% | Direction: ${this.scrollDirection} | At top: ${scrollInfo.isAtTop} | At bottom: ${scrollInfo.isAtBottom}`);
 
-      if (scrollInfo.isAtBottom) {
-        // At bottom - FIRST scroll to top, THEN refresh
+      // Handle reaching bottom while scrolling down
+      if (scrollInfo.isAtBottom && this.scrollDirection === 'down') {
         this.refreshCount = (this.refreshCount || 0) + 1;
-        logger.info(`📍 Reached bottom (100%), scrolling to top first...`);
+        logger.info(`⬇️ Reached BOTTOM (100%) - Refreshing page... (refresh #${this.refreshCount})`);
 
-        // Step 1: Scroll to top
-        await this.page.evaluate(() => {
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-        });
-
-        // Wait for scroll to complete
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        logger.info('✅ Scrolled to top');
-
-        // Step 2: Now refresh the page
-        logger.info(`🔄 Now refreshing page for new content... (refresh #${this.refreshCount})`);
-
+        // Refresh the page
         try {
           await this.page.reload({ waitUntil: 'networkidle2', timeout: 30000 });
-          logger.info('✅ Page refreshed successfully');
-
-          // After refresh, ensure we're at the top
-          await this.page.evaluate(() => {
-            window.scrollTo(0, 0);
-          });
+          logger.info('✅ Page refreshed at bottom');
         } catch (reloadError) {
           logger.error('Page reload failed:', reloadError.message);
-          logger.info('Continuing without refresh...');
         }
 
-        // Wait for content to load after refresh
+        // Wait for content to load
         await new Promise(resolve => setTimeout(resolve, 3000));
 
-        // Re-disable clicks after refresh (matching ads-logic)
-        try {
-          await this.page.evaluate(() => {
-            // Remove all click handlers
-            document.querySelectorAll('*').forEach(element => {
-              element.onclick = null;
-              element.onmousedown = null;
-              element.onmouseup = null;
-            });
+        // Change direction to UP
+        this.scrollDirection = 'up';
+        logger.info('🔄 Now scrolling UP from bottom');
 
-            // Disable all links
-            document.querySelectorAll('a').forEach(link => {
-              link.removeAttribute('href');
-              link.removeAttribute('target');
-              link.style.pointerEvents = 'none';
-              link.onclick = (e) => {
-                e.preventDefault();
-                return false;
-              };
-            });
-
-            // Disable iframes from navigation
-            document.querySelectorAll('iframe').forEach(iframe => {
-              iframe.style.pointerEvents = 'none';
-            });
-          });
-          logger.info('🔒 Clicks disabled after refresh');
-        } catch (disableError) {
-          logger.error('Failed to disable clicks:', disableError.message);
-        }
-      } else {
-        // Regular scrolling - use same logic as ads-logic: 40% of viewport with smooth scrolling
-        logger.info('📜 Auto-scrolling...');
+        // Start scrolling up from bottom
         await this.page.evaluate(() => {
-          window.scrollBy({
-            top: window.innerHeight * 0.4,  // Smaller scroll increment (40% of viewport)
-            behavior: 'smooth'  // Smooth scroll for better content loading
-          });
+          // Ensure we're at bottom after refresh
+          window.scrollTo(0, document.body.scrollHeight);
         });
+
+        // Disable clicks after refresh
+        await this.disableClicks();
+      }
+      // Handle reaching top while scrolling up
+      else if (scrollInfo.isAtTop && this.scrollDirection === 'up') {
+        this.refreshCount = (this.refreshCount || 0) + 1;
+        logger.info(`⬆️ Reached TOP (0%) - Refreshing page... (refresh #${this.refreshCount})`);
+
+        // Refresh the page
+        try {
+          await this.page.reload({ waitUntil: 'networkidle2', timeout: 30000 });
+          logger.info('✅ Page refreshed at top');
+        } catch (reloadError) {
+          logger.error('Page reload failed:', reloadError.message);
+        }
+
+        // Wait for content to load
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        // Change direction to DOWN
+        this.scrollDirection = 'down';
+        logger.info('🔄 Now scrolling DOWN from top');
+
+        // Ensure we're at top after refresh
+        await this.page.evaluate(() => {
+          window.scrollTo(0, 0);
+        });
+
+        // Disable clicks after refresh
+        await this.disableClicks();
+      }
+      // Regular scrolling based on current direction
+      else {
+        if (this.scrollDirection === 'down') {
+          logger.info('⬇️📜 Auto-scrolling DOWN (extracting ads)...');
+          await this.page.evaluate(() => {
+            window.scrollBy({
+              top: window.innerHeight * 0.4,  // Scroll down 40% of viewport
+              behavior: 'smooth'
+            });
+          });
+        } else {
+          logger.info('⬆️📜 Auto-scrolling UP (extracting ads)...');
+          await this.page.evaluate(() => {
+            window.scrollBy({
+              top: -window.innerHeight * 0.4,  // Scroll up 40% of viewport
+              behavior: 'smooth'
+            });
+          });
+        }
 
         // Wait for smooth scroll to complete
         await new Promise(resolve => setTimeout(resolve, 800));
       }
 
-      // No additional wait needed - already handled above
     } catch (error) {
       logger.warn(`Scroll error: ${error.message}`);
+    }
+  }
+
+  async disableClicks() {
+    try {
+      await this.page.evaluate(() => {
+        // Remove all click handlers
+        document.querySelectorAll('*').forEach(element => {
+          element.onclick = null;
+          element.onmousedown = null;
+          element.onmouseup = null;
+        });
+
+        // Disable all links
+        document.querySelectorAll('a').forEach(link => {
+          link.removeAttribute('href');
+          link.removeAttribute('target');
+          link.style.pointerEvents = 'none';
+          link.onclick = (e) => {
+            e.preventDefault();
+            return false;
+          };
+        });
+
+        // Disable iframes from navigation
+        document.querySelectorAll('iframe').forEach(iframe => {
+          iframe.style.pointerEvents = 'none';
+        });
+      });
+      logger.info('🔒 Clicks disabled after refresh');
+    } catch (error) {
+      logger.error('Failed to disable clicks:', error.message);
     }
   }
 
@@ -1272,7 +1313,7 @@ class WorkerAdExtractor {
           }
         }
 
-        // Extract ads after scrolling
+        // Extract ads after scrolling (captures ads in BOTH directions)
         try {
           await this.extractAds();
           this.consecutiveErrors = 0; // Reset error counter on success
