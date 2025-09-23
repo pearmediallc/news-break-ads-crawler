@@ -187,45 +187,92 @@ class WorkerAdExtractor {
 
           console.log(`🎯 UNLIMITED MODE: Found ${foundAds.length} ForYou ads`);
 
-          // ENHANCED FALLBACK: If no ForYou containers found, use broader detection
-          if (foundAds.length === 0) {
-            console.log('No ForYou containers found, trying broader detection...');
+          // ALWAYS RUN MULTI-PATTERN DETECTION IN UNLIMITED MODE
+          // Don't wait for zero ads - extract from all sources for maximum results
 
-            // FALLBACK 1: Look for any containers with iframes (broader than ForYou)
-            const allIframes = document.querySelectorAll('iframe');
-            allIframes.forEach((iframe, index) => {
+          // Pattern 2: Ad network iframes (mspai, nova, google ads, taboola, outbrain)
+          const adIframeSelectors = [
+            'iframe[class*="mspai"]',
+            'iframe[class*="nova"]',
+            'iframe[id*="google_ads"]',
+            'iframe[name*="google_ads"]',
+            'iframe[src*="doubleclick"]',
+            'iframe[src*="googlesyndication"]',
+            'iframe[src*="adsystem"]',
+            'iframe[src*="adnxs"]',
+            'iframe[src*="taboola"]',
+            'iframe[src*="outbrain"]'
+          ];
+
+          adIframeSelectors.forEach(selector => {
+            try {
+              const iframes = document.querySelectorAll(selector);
+              iframes.forEach(iframe => {
+                if (!foundAds.find(ad => ad.iframe === iframe)) {
+                  const container = iframe.closest('div, section, article') || iframe.parentElement;
+                  foundAds.push({ container, iframe, type: 'AdNetwork' });
+                }
+              });
+            } catch (e) {}
+          });
+
+          // Pattern 3: ALL iframes as potential ads
+          document.querySelectorAll('iframe').forEach(iframe => {
+            if (foundAds.find(ad => ad.iframe === iframe)) return;
+            const src = iframe.src || '';
+            const className = iframe.className || '';
+            const id = iframe.id || '';
+            // Any iframe with ad indicators or any src could be an ad
+            if (src.includes('ad') || src.includes('sponsor') ||
+                className.includes('ad') || className.includes('sponsor') ||
+                id.includes('ad') || id.includes('sponsor') ||
+                src.length > 0) {
               const container = iframe.closest('div, section, article') || iframe.parentElement;
-              if (container && !foundAds.find(ad => ad.container === container)) {
-                foundAds.push({ container, iframe, type: 'General-Iframe' });
-              }
-            });
+              foundAds.push({ container, iframe, type: 'Generic-Iframe' });
+            }
+          });
 
-            // FALLBACK 2: Look for sponsored/promoted content indicators
-            const sponsoredSelectors = [
-              '[class*="sponsored" i]',
-              '[class*="promoted" i]',
-              '[class*="advertisement" i]',
-              '[class*="ad-" i]',
-              '[data-ad]',
-              '[data-sponsored]',
-              'div[class*="ad_"]'
-            ];
+          // Pattern 4: Expanded sponsored content selectors
+          const sponsoredSelectors = [
+            '[class*="sponsor" i]',
+            '[class*="promoted" i]',
+            '[class*="ad-" i]',
+            '[class*="advertisement" i]',
+            '[data-ad]',
+            '[data-sponsor]',
+            '[data-promoted]',
+            'div[class*="taboola"]',
+            'div[class*="outbrain"]',
+            'div[id*="taboola"]',
+            'div[id*="outbrain"]',
+            '[class*="native-ad" i]',
+            '[class*="paid-content" i]',
+            '[class*="partner-content" i]'
+          ];
 
-            sponsoredSelectors.forEach(selector => {
-              try {
-                const elements = document.querySelectorAll(selector);
-                elements.forEach(element => {
-                  if (!foundAds.find(ad => ad.container === element)) {
-                    foundAds.push({ container: element, iframe: null, type: 'Sponsored-Content' });
-                  }
-                });
-              } catch (e) {
-                console.warn('Error with sponsored selector:', selector, e.message);
-              }
-            });
+          sponsoredSelectors.forEach(selector => {
+            try {
+              const elements = document.querySelectorAll(selector);
+              elements.forEach(element => {
+                if (!foundAds.find(ad => ad.container === element)) {
+                  foundAds.push({ container: element, iframe: null, type: 'Sponsored-Content' });
+                }
+              });
+            } catch (e) {}
+          });
 
-            console.log(`Found ${foundAds.length} ads using broader detection`);
-          }
+          // Pattern 5: Native ads (articles/cards with sponsored text)
+          document.querySelectorAll('article, div[class*="card"], div[class*="post"], div[class*="item"], div[class*="story"]').forEach(article => {
+            if (foundAds.find(ad => ad.container === article)) return;
+            const text = article.textContent.toLowerCase();
+            if (text.includes('sponsored') || text.includes('promoted') ||
+                text.includes('advertisement') || text.includes('partner content') ||
+                text.includes('paid content')) {
+              foundAds.push({ container: article, iframe: null, type: 'NativeAd' });
+            }
+          });
+
+          console.log(`✅ Total ads found with multi-pattern detection: ${foundAds.length}`);
 
           if (foundAds.length === 0) {
             console.log('No ads found even with broader detection - page may be loading or have no ads');
@@ -677,8 +724,8 @@ class WorkerAdExtractor {
       );
 
       if (scrollY >= maxScroll - 100) {
-        // At bottom - refresh page occasionally or scroll back up
-        if (this.consecutiveNoNewAds > 15) {
+        // At bottom - refresh page less frequently to avoid disrupting ad loading
+        if (this.consecutiveNoNewAds > 25) {
           logger.info(`🔄 Refreshing page for new ad inventory...`);
           await this.page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
           await this.page.evaluate(() => window.scrollTo(0, 0));
@@ -698,7 +745,9 @@ class WorkerAdExtractor {
         }, scrollAmount);
       }
 
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Shorter wait in unlimited mode for faster extraction
+      const scrollWait = workerData.extractionMode === 'unlimited' ? 1000 : 2000;
+      await new Promise(resolve => setTimeout(resolve, scrollWait));
     } catch (error) {
       logger.warn(`Scroll error: ${error.message}`);
     }
@@ -1124,6 +1173,10 @@ class WorkerAdExtractor {
       await this.extractAds();
 
       // In unlimited mode, run forever. In timed mode, check duration
+      // Optimize timing based on extraction mode
+      const extractInterval = workerData.extractionMode === 'unlimited' ? 2000 : 5000; // Faster in unlimited mode
+      const scrollInterval = workerData.extractionMode === 'unlimited' ? 1500 : 3000; // Faster scrolling in unlimited
+
       while (this.isRunning && (workerData.extractionMode === 'unlimited' || (Date.now() - this.startTime) < durationMs)) {
         extractionCount++;
 
@@ -1131,6 +1184,8 @@ class WorkerAdExtractor {
         try {
           if (this.browser && this.browser.isConnected() && this.page) {
             await this.scrollAndWait();
+            // Shorter wait in unlimited mode for faster extraction
+            await new Promise(resolve => setTimeout(resolve, scrollInterval));
           } else {
             logger.warn(`⚠️ Skipping scroll - browser not connected`);
             await new Promise(resolve => setTimeout(resolve, 5000)); // Wait before retry
