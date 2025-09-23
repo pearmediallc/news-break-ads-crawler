@@ -742,21 +742,33 @@ class WorkerAdExtractor {
       logger.debug(`📍 Scroll: ${scrollPercentage}% (${scrollInfo.scrollY}/${scrollInfo.maxScroll}px), At bottom: ${scrollInfo.isAtBottom}`);
 
       if (scrollInfo.isAtBottom) {
-        // At bottom - use same refresh logic as ads-logic folder
-        // No limit on refreshes, just increment counter
+        // At bottom - FIRST scroll to top, THEN refresh
         this.refreshCount = (this.refreshCount || 0) + 1;
-        logger.info(`🔄 Reached bottom, refreshing page for new content... (refresh #${this.refreshCount})`);
+        logger.info(`📍 Reached bottom (100%), scrolling to top first...`);
+
+        // Step 1: Scroll to top
+        await this.page.evaluate(() => {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+
+        // Wait for scroll to complete
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        logger.info('✅ Scrolled to top');
+
+        // Step 2: Now refresh the page
+        logger.info(`🔄 Now refreshing page for new content... (refresh #${this.refreshCount})`);
 
         try {
           await this.page.reload({ waitUntil: 'networkidle2', timeout: 30000 });
           logger.info('✅ Page refreshed successfully');
+
+          // After refresh, ensure we're at the top
+          await this.page.evaluate(() => {
+            window.scrollTo(0, 0);
+          });
         } catch (reloadError) {
           logger.error('Page reload failed:', reloadError.message);
-          // If reload fails, try to scroll to top instead
-          await this.page.evaluate(() => {
-            window.scrollTo({ top: 0, behavior: 'auto' });
-          });
-          logger.info('📄 Scrolled to top instead of refresh');
+          logger.info('Continuing without refresh...');
         }
 
         // Wait for content to load after refresh

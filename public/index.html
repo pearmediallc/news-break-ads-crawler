@@ -1288,10 +1288,22 @@
         function displayAds(ads) {
             const grid = document.getElementById('adsGrid');
 
-            console.log('displayAds called with:', ads); // Debug log
+            console.log('displayAds called with:', ads ? `${ads.length} ads` : 'no ads'); // Better debug log
+
+            // Clear loading state
+            const loadingElement = document.getElementById('adsLoading');
+            if (loadingElement) {
+                loadingElement.classList.remove('active');
+            }
+
+            if (!grid) {
+                console.error('Ads grid element not found!');
+                return;
+            }
 
             if (!ads || ads.length === 0) {
-                grid.innerHTML = '<p>No ads found. Start an extraction to collect ads.</p>';
+                grid.innerHTML = '<p style="text-align: center; padding: 40px; color: #666;">No ads found. Start an extraction or click "Load DB" to load from database.</p>';
+                updateStats([]); // Update stats with empty array
                 return;
             }
 
@@ -1453,43 +1465,75 @@
         }
 
         async function refreshAds() {
-            const sessionSelector = document.getElementById('sessionSelector');
-            const currentSession = sessionSelector.value;
+            console.log('🔄 Refreshing ads...');
+            document.getElementById('adsLoading').classList.add('active');
 
-            // Force reload from server, not cache
             try {
-                // If there's a current session, load from it
-                if (currentSession) {
-                    const response = await fetch(`/api/ads?session=${currentSession}&t=${Date.now()}`);
-                    adsData = await response.json();
-                } else {
-                    // Load from current session file
-                    const currentSessionResponse = await fetch(`/api/sessions/current?t=${Date.now()}`);
+                // Get the current session selector value
+                const sessionSelector = document.getElementById('sessionSelector');
+                let sessionToLoad = sessionSelector ? sessionSelector.value : '';
+
+                // If no session selected, try to get the current session
+                if (!sessionToLoad || sessionToLoad === '') {
+                    const currentSessionResponse = await fetch('/api/sessions/current');
                     const currentSessionData = await currentSessionResponse.json();
 
                     if (currentSessionData && currentSessionData.sessionFile) {
-                        const response = await fetch(`/api/ads?session=${currentSessionData.sessionFile}&t=${Date.now()}`);
-                        adsData = await response.json();
-                    } else {
-                        // Fallback to default
-                        const response = await fetch(`/api/ads?t=${Date.now()}`);
-                        adsData = await response.json();
+                        sessionToLoad = currentSessionData.sessionFile;
+                        console.log('Loading current session:', sessionToLoad);
                     }
                 }
 
-                // Display the refreshed ads
-                displayAds(adsData);
-                updateStats(adsData);
+                // Build the URL with cache buster
+                let url = '/api/ads';
+                if (sessionToLoad) {
+                    url = `/api/ads?session=${sessionToLoad}&t=${Date.now()}`;
+                } else {
+                    url = `/api/ads?t=${Date.now()}`;
+                }
+
+                console.log('Fetching ads from:', url);
+
+                // Fetch the ads
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const newAdsData = await response.json();
+                console.log(`Received ${newAdsData.length} ads from server`);
+
+                // Update the global adsData
+                adsData = newAdsData;
+
+                // Force display update
+                if (adsData && adsData.length > 0) {
+                    displayAds(adsData);
+                    updateStats(adsData);
+                    showAlert('success', `✅ Refreshed - ${adsData.length} ads loaded`);
+                } else {
+                    // If no ads, show empty state
+                    const adsGrid = document.getElementById('adsGrid');
+                    if (adsGrid) {
+                        adsGrid.innerHTML = '<p style="text-align: center; padding: 40px; color: #666;">No ads found. Start a new extraction or load from database.</p>';
+                    }
+                    showAlert('info', 'No ads found in current session');
+                }
 
                 // Update other UI elements
                 await loadStats();
                 await loadSessions();
                 updateSessionInfo();
 
-                showAlert('success', `Data refreshed - ${adsData.length} ads loaded`);
             } catch (error) {
                 console.error('Failed to refresh ads:', error);
-                showAlert('error', 'Failed to refresh ads data');
+                showAlert('error', `Failed to refresh: ${error.message}`);
+
+                // Try to recover by loading from database
+                console.log('Attempting to load from database as fallback...');
+                loadFromDatabase();
+            } finally {
+                document.getElementById('adsLoading').classList.remove('active');
             }
         }
 
