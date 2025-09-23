@@ -718,36 +718,79 @@ class WorkerAdExtractor {
 
   async scrollAndWait() {
     try {
-      const scrollY = await this.page.evaluate(() => window.pageYOffset);
-      const maxScroll = await this.page.evaluate(() =>
-        document.documentElement.scrollHeight - window.innerHeight
-      );
+      const scrollInfo = await this.page.evaluate(() => {
+        const scrollY = window.pageYOffset;
+        const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+        const isAtBottom = scrollY >= maxScroll - 50;
+        return { scrollY, maxScroll, isAtBottom };
+      });
 
-      if (scrollY >= maxScroll - 100) {
-        // At bottom - refresh page less frequently to avoid disrupting ad loading
-        if (this.consecutiveNoNewAds > 25) {
-          logger.info(`🔄 Refreshing page for new ad inventory...`);
-          await this.page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
-          await this.page.evaluate(() => window.scrollTo(0, 0));
-          this.consecutiveNoNewAds = Math.max(0, this.consecutiveNoNewAds - 5); // Reduce but don't reset completely
-        } else {
-          logger.info(`📍 At bottom, scrolling back to top`);
-          await this.page.evaluate(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
-          // Wait a bit for smooth scroll to complete
-          await new Promise(resolve => setTimeout(resolve, 1000));
+      if (scrollInfo.isAtBottom) {
+        // At bottom - use same refresh logic as ads-logic folder
+        // No limit on refreshes, just increment counter
+        this.refreshCount = (this.refreshCount || 0) + 1;
+        logger.info(`🔄 Reached bottom, refreshing page for new content... (refresh #${this.refreshCount})`);
+
+        try {
+          await this.page.reload({ waitUntil: 'networkidle2', timeout: 30000 });
+          logger.info('✅ Page refreshed successfully');
+        } catch (reloadError) {
+          logger.error('Page reload failed:', reloadError.message);
+          // If reload fails, try to scroll to top instead
+          await this.page.evaluate(() => {
+            window.scrollTo({ top: 0, behavior: 'auto' });
+          });
+          logger.info('📄 Scrolled to top instead of refresh');
+        }
+
+        // Wait for content to load after refresh
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        // Re-disable clicks after refresh (matching ads-logic)
+        try {
+          await this.page.evaluate(() => {
+            // Remove all click handlers
+            document.querySelectorAll('*').forEach(element => {
+              element.onclick = null;
+              element.onmousedown = null;
+              element.onmouseup = null;
+            });
+
+            // Disable all links
+            document.querySelectorAll('a').forEach(link => {
+              link.removeAttribute('href');
+              link.removeAttribute('target');
+              link.style.pointerEvents = 'none';
+              link.onclick = (e) => {
+                e.preventDefault();
+                return false;
+              };
+            });
+
+            // Disable iframes from navigation
+            document.querySelectorAll('iframe').forEach(iframe => {
+              iframe.style.pointerEvents = 'none';
+            });
+          });
+          logger.info('🔒 Clicks disabled after refresh');
+        } catch (disableError) {
+          logger.error('Failed to disable clicks:', disableError.message);
         }
       } else {
-        // Regular scrolling down with variable speeds
-        logger.info(`📜 Auto-scrolling...`);
-        const scrollAmount = 300 + Math.random() * 200; // Vary scroll amount 300-500px
-        await this.page.evaluate((amount) => {
-          window.scrollBy({ top: amount, behavior: 'smooth' });
-        }, scrollAmount);
+        // Regular scrolling - use same logic as ads-logic: 40% of viewport with smooth scrolling
+        logger.info('📜 Auto-scrolling...');
+        await this.page.evaluate(() => {
+          window.scrollBy({
+            top: window.innerHeight * 0.4,  // Smaller scroll increment (40% of viewport)
+            behavior: 'smooth'  // Smooth scroll for better content loading
+          });
+        });
+
+        // Wait for smooth scroll to complete
+        await new Promise(resolve => setTimeout(resolve, 800));
       }
 
-      // Shorter wait in unlimited mode for faster extraction
-      const scrollWait = workerData.extractionMode === 'unlimited' ? 1000 : 2000;
-      await new Promise(resolve => setTimeout(resolve, scrollWait));
+      // No additional wait needed - already handled above
     } catch (error) {
       logger.warn(`Scroll error: ${error.message}`);
     }
@@ -1173,9 +1216,9 @@ class WorkerAdExtractor {
       await this.extractAds();
 
       // In unlimited mode, run forever. In timed mode, check duration
-      // Optimize timing based on extraction mode
-      const extractInterval = workerData.extractionMode === 'unlimited' ? 2000 : 5000; // Faster in unlimited mode
-      const scrollInterval = workerData.extractionMode === 'unlimited' ? 1500 : 3000; // Faster scrolling in unlimited
+      // Use same timing as ads-logic folder for optimal extraction
+      const scanInterval = workerData.extractionMode === 'unlimited' ? 3000 : 5000; // 3s scan interval in unlimited
+      const scrollInterval = workerData.extractionMode === 'unlimited' ? 2500 : 3000; // 2.5s scroll interval in unlimited
 
       while (this.isRunning && (workerData.extractionMode === 'unlimited' || (Date.now() - this.startTime) < durationMs)) {
         extractionCount++;
