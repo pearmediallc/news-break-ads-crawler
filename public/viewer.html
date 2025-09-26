@@ -681,17 +681,33 @@
             // Only process updates if viewing current session
             if (currentSessionFile) return;
 
-            if (data.type === 'new_ad') {
-                // Single new ad
-                if (data.ad) {
-                    adsData.unshift(data.ad);
-                    displayAds([data.ad], true);
-                    updateStats(adsData);
+            if (data.type === 'new_ads') {
+                // Handle new ads from extraction
+                console.log('🆕 New ads received:', data.newAds);
+
+                if (data.newAds && data.newAds.length > 0) {
+                    // Find ads not already displayed
+                    const newAds = data.newAds.filter(ad => {
+                        const adId = `${ad.advertiser}_${ad.headline}_${ad.timestamp}`;
+                        return !seenAdIds.has(adId);
+                    });
+
+                    if (newAds.length > 0) {
+                        console.log(`✅ Adding ${newAds.length} new ads to display`);
+
+                        // Add new ads to the beginning of our data
+                        adsData.unshift(...newAds);
+
+                        // Display only the new ads with animation
+                        displayAds(newAds, true);
+
+                        // Update statistics
+                        updateStats(adsData);
+                    }
                 }
             } else if (data.type === 'ads_update') {
-                // Multiple ads update
+                // Legacy format support
                 if (data.ads && data.ads.length > 0) {
-                    // Find new ads not in our current data
                     const newAds = data.ads.filter(ad => {
                         const adId = `${ad.advertiser}_${ad.headline}_${ad.timestamp}`;
                         return !seenAdIds.has(adId);
@@ -703,13 +719,24 @@
                         updateStats(adsData);
                     }
                 }
+            } else if (data.type === 'status_update') {
+                // Handle status updates
+                console.log('📊 Status update:', data.status);
+                if (data.status && data.status.message) {
+                    document.getElementById('currentSessionInfo').textContent = `(${data.status.message})`;
+                }
             } else if (data.type === 'extraction_started') {
                 // Show extraction started notification
+                console.log('🚀 Extraction started');
                 document.getElementById('currentSessionInfo').textContent = '(Extraction in progress...)';
-            } else if (data.type === 'extraction_stopped') {
+            } else if (data.type === 'extraction_stopped' || data.type === 'extraction_complete') {
                 // Show extraction stopped notification
+                console.log('⏹️ Extraction stopped/completed');
                 document.getElementById('currentSessionInfo').textContent = '(Current)';
                 refreshAds();
+            } else if (data.type === 'log') {
+                // Log extraction messages
+                console.log(`📝 Extraction log: ${data.message}`);
             }
         }
 
