@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Viewer</title>
+</head>
+<body>
+    <h1>Test Session Loader</h1>
+    <div id="status">Loading...</div>
+    <div id="ads"></div>
+
+    <script>
+        async function testLoad() {
+            const statusDiv = document.getElementById('status');
+            const adsDiv = document.getElementById('ads');
+
+            try {
+                // Test 1: Load current_session.json
+                const currentResponse = await fetch('/data/current_session.json');
+                if (!currentResponse.ok) {
+                    statusDiv.textContent = 'Failed to load current_session.json';
+                    return;
+                }
+
+                const currentData = await currentResponse.json();
+                statusDiv.innerHTML = `Current session file: ${currentData.sessionFile}<br>`;
+
+                // Test 2: Load the session file
+                const sessionResponse = await fetch(`/data/sessions/${currentData.sessionFile}`);
+                if (!sessionResponse.ok) {
+                    statusDiv.innerHTML += 'Failed to load session file';
+                    return;
+                }
+
+                const sessionData = await sessionResponse.json();
+                statusDiv.innerHTML += `Total ads: ${sessionData.ads?.length || 0}<br>`;
+
+                // Display ads
+                if (sessionData.ads && sessionData.ads.length > 0) {
+                    adsDiv.innerHTML = sessionData.ads.map(ad => `
+                        <div style="border: 1px solid #ccc; padding: 10px; margin: 10px;">
+                            <strong>${ad.advertiser || 'Unknown'}</strong><br>
+                            ${ad.headline || 'No headline'}<br>
+                            ${ad.body || 'No body'}
+                        </div>
+                    `).join('');
+                } else {
+                    adsDiv.innerHTML = 'No ads in session';
+                }
+
+            } catch (error) {
+                statusDiv.textContent = 'Error: ' + error.message;
+                console.error(error);
+            }
+        }
+
+        // Run test on load
+        testLoad();
+    </script>
+</body>
+</html>
