@@ -1,4 +1,4 @@
-// Enhanced AdsPower Extractor v1.2 with Mobile Support
+// Enhanced AdsPower Extractor v1.4 with Mobile Support and User Management
 const axios = require('axios');
 let puppeteer;
 try {
@@ -149,7 +149,7 @@ class AdsPowerExtractor {
     }
 
     async extract(url = 'https://www.newsbreak.com', duration = 5, deviceMode = 'desktop') {
-        logger.info('🎯 AdsPower Extractor v1.2 with USA IP');
+        logger.info('🎯 AdsPower Extractor v1.4 with USA IP');
         logger.info(`⏱️ Duration: ${duration} minutes`);
         logger.info(`📱 Device Mode: ${deviceMode}`);
 
@@ -445,7 +445,7 @@ class AdsPowerExtractor {
     }
 }
 
-// Main execution v1.2
+// Main execution v1.4
 async function main() {
     const url = process.argv[2] || 'https://www.newsbreak.com';
     const duration = parseInt(process.argv[3]) || 5;

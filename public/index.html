@@ -349,8 +349,20 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🎯 NewsBreak Ads Crawler Control Panel <span style="font-size: 0.6em; color: #666; font-weight: normal;">v1.3</span> <span id="realtimeIndicator" class="realtime-status" style="display: none;" title="Real-time updates connected"></span></h1>
-            <p>Extract and manage advertisements from NewsBreak pages</p>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <h1>🎯 NewsBreak Ads Crawler Control Panel <span style="font-size: 0.6em; color: #666; font-weight: normal;">v1.4</span> <span id="realtimeIndicator" class="realtime-status" style="display: none;" title="Real-time updates connected"></span></h1>
+                    <p>Extract and manage advertisements from NewsBreak pages</p>
+                </div>
+                <div style="display: flex; gap: 10px;">
+                    <button onclick="window.location.href='/users'" class="btn" style="background: #6366f1; color: white;">
+                        👥 Manage Users
+                    </button>
+                    <button onclick="logout()" class="btn" style="background: #ef4444; color: white;">
+                        🚪 Logout
+                    </button>
+                </div>
+            </div>
         </div>
 
         <div class="control-panel">
@@ -518,6 +530,16 @@
         let currentExtractionId = null;
         let statusCheckInterval = null;
         let adsData = [];
+
+        // Logout function
+        function logout() {
+            fetch('/api/auth/logout')
+                .then(() => {
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('user');
+                    window.location.href = '/login';
+                });
+        }
 
         // Real-time updates via Server-Sent Events
         let eventSource = null;

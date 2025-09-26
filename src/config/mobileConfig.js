@@ -1,4 +1,4 @@
-// Mobile Configuration for News Break Ads Crawler v1.2
+// Mobile Configuration for News Break Ads Crawler v1.4
 const mobileConfig = {
   // Popular mobile user agents for different devices
   userAgents: {

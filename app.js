@@ -2,8 +2,12 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs-extra');
 const { spawn } = require('child_process');
+const cookieParser = require('cookie-parser');
+const session = require('express-session');
 const queryRoutes = require('./src/api/queryRoutes');
 const BackgroundExtractionService = require('./src/services/backgroundExtractor');
+const { authenticateUser, generateToken, requireAuth, requireAdmin } = require('./src/auth/authMiddleware');
+const userManager = require('./src/auth/userManager');
 const app = express();
 
 // Store active extraction processes
@@ -14,7 +18,20 @@ const backgroundExtractor = new BackgroundExtractionService();
 
 // Middleware
 app.use(express.json());
-app.use(express.static('public'));
+app.use(cookieParser());
+app.use(session({
+    secret: process.env.SESSION_SECRET || 'your-session-secret-change-in-production',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        secure: process.env.NODE_ENV === 'production',
+        httpOnly: true,
+        maxAge: null // Session cookie - expires when browser closes
+    }
+}));
+
+// Static files - only serve public assets, not protected pages
+app.use('/assets', express.static(path.join(__dirname, 'public', 'assets')));
 app.use('/data', express.static('data'));
 
 // Database query API routes
@@ -25,13 +42,140 @@ app.get('/health', (req, res) => {
     res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
-// Serve the main dashboard
+// Authentication routes
+app.get('/login', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+app.post('/api/auth/login', async (req, res) => {
+    const { username, password } = req.body;
+
+    try {
+        const user = await authenticateUser(username, password);
+        if (!user) {
+            return res.status(401).json({ error: 'Invalid username or password' });
+        }
+
+        const token = generateToken(user);
+
+        // Set token as httpOnly cookie
+        res.cookie('token', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production'
+            // No maxAge = session cookie (expires when browser closes)
+        });
+
+        res.json({
+            success: true,
+            token,
+            user: {
+                username: user.username,
+                role: user.role
+            }
+        });
+    } catch (error) {
+        console.error('Login error:', error);
+        res.status(500).json({ error: 'Login failed' });
+    }
+});
+
+app.get('/api/auth/logout', (req, res) => {
+    res.clearCookie('token');
+    res.json({ success: true, message: 'Logged out successfully' });
+});
+
+app.get('/api/auth/me', requireAuth, (req, res) => {
+    res.json({
+        user: {
+            username: req.user.username,
+            role: req.user.role
+        }
+    });
+});
+
+// Root route - redirect based on authentication
 app.get('/', (req, res) => {
+    res.redirect('/login');
+});
+
+// Admin dashboard - requires admin role
+app.get('/admin', requireAuth, requireAdmin, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// API endpoint to start extraction
-app.post('/api/extract/start', async (req, res) => {
+// Viewer dashboard - requires authentication
+app.get('/viewer', requireAuth, (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'viewer.html'));
+});
+
+// User management page - Admin only
+app.get('/users', requireAuth, requireAdmin, (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'user-management.html'));
+});
+
+// User management API endpoints
+app.get('/api/users', requireAuth, requireAdmin, async (req, res) => {
+    try {
+        const users = await userManager.getAllUsers();
+        res.json(users);
+    } catch (error) {
+        console.error('Error fetching users:', error);
+        res.status(500).json({ error: 'Failed to fetch users' });
+    }
+});
+
+app.post('/api/users', requireAuth, requireAdmin, async (req, res) => {
+    const { username, password, role } = req.body;
+
+    try {
+        const newUser = await userManager.createUser(username, password, role);
+        res.status(201).json(newUser);
+    } catch (error) {
+        console.error('Error creating user:', error);
+        res.status(400).json({ error: error.message });
+    }
+});
+
+app.put('/api/users/:username/role', requireAuth, requireAdmin, async (req, res) => {
+    const { username } = req.params;
+    const { role } = req.body;
+
+    try {
+        await userManager.updateUserRole(username, role);
+        res.json({ success: true, message: 'Role updated successfully' });
+    } catch (error) {
+        console.error('Error updating user role:', error);
+        res.status(400).json({ error: error.message });
+    }
+});
+
+app.put('/api/users/:username/password', requireAuth, requireAdmin, async (req, res) => {
+    const { username } = req.params;
+    const { password } = req.body;
+
+    try {
+        await userManager.updateUserPassword(username, password);
+        res.json({ success: true, message: 'Password updated successfully' });
+    } catch (error) {
+        console.error('Error updating password:', error);
+        res.status(400).json({ error: error.message });
+    }
+});
+
+app.delete('/api/users/:username', requireAuth, requireAdmin, async (req, res) => {
+    const { username } = req.params;
+
+    try {
+        await userManager.deleteUser(username);
+        res.json({ success: true, message: 'User deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting user:', error);
+        res.status(400).json({ error: error.message });
+    }
+});
+
+// API endpoint to start extraction - Admin only
+app.post('/api/extract/start', requireAuth, requireAdmin, async (req, res) => {
     const { url, duration, deviceMode = 'desktop', extractionMode = 'timed' } = req.body;
 
     // Validate input
@@ -86,8 +230,8 @@ app.post('/api/extract/start', async (req, res) => {
     }
 });
 
-// API endpoint to resume extraction
-app.post('/api/extract/resume/:id', async (req, res) => {
+// API endpoint to resume extraction - Admin only
+app.post('/api/extract/resume/:id', requireAuth, requireAdmin, async (req, res) => {
     try {
         const { id } = req.params;
         const result = await backgroundExtractor.resumeExtraction(id);
@@ -118,8 +262,8 @@ app.post('/api/extract/resume/:id', async (req, res) => {
     }
 });
 
-// API endpoint to stop extraction
-app.post('/api/extract/stop/:id', async (req, res) => {
+// API endpoint to stop extraction - Admin only
+app.post('/api/extract/stop/:id', requireAuth, requireAdmin, async (req, res) => {
     try {
         const { id } = req.params;
         const extraction = activeExtractions.get(id);
@@ -420,8 +564,8 @@ function convertToCSV(ads) {
     return csvContent;
 }
 
-// API endpoint to create a new session
-app.post('/api/sessions/new', async (req, res) => {
+// API endpoint to create a new session - Admin only
+app.post('/api/sessions/new', requireAuth, requireAdmin, async (req, res) => {
     try {
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const sessionFile = `session_${timestamp}.json`;
@@ -477,8 +621,8 @@ app.post('/api/sessions/new', async (req, res) => {
     }
 });
 
-// API endpoint to switch to a different session
-app.post('/api/sessions/switch', async (req, res) => {
+// API endpoint to switch to a different session - Admin only
+app.post('/api/sessions/switch', requireAuth, requireAdmin, async (req, res) => {
     try {
         const { sessionFile } = req.body;
 
@@ -625,9 +769,14 @@ function broadcastUpdate(data) {
   }
 }
 
-// Initialize background extractor service
+// Initialize services
 (async () => {
     try {
+        // Initialize user manager first
+        await userManager.initialize();
+        console.log('User management service initialized');
+
+        // Initialize background extractor
         await backgroundExtractor.initialize();
         console.log('Background extraction service initialized');
 

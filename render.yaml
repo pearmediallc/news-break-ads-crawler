@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: news-break-ads-crawler-v1-3
+    name: news-break-ads-crawler-v1-4
     runtime: docker
     env: docker
     dockerfilePath: ./Dockerfile
@@ -16,8 +16,16 @@ services:
         value: true
       - key: PUPPETEER_EXECUTABLE_PATH
         value: /usr/bin/google-chrome-stable
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: ENABLE_USER_MANAGEMENT
+        value: true
+      - key: ENABLE_ROLE_BASED_ACCESS
+        value: true
     autoDeploy: true
     disk:
       name: data-storage
       mountPath: /usr/src/app/data
-      sizeGB: 2
+      sizeGB: 5

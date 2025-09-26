@@ -1,4 +1,4 @@
-// Mobile Ad Extractor for News Break v1.2
+// Mobile Ad Extractor for News Break v1.4
 const { mobileConfig, mobileHelpers } = require('../config/mobileConfig');
 const logger = require('../utils/logger');
 
