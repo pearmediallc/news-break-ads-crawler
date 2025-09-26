@@ -593,12 +593,29 @@
                 selector.innerHTML = '<option value="">Current Session</option>';
 
                 if (sessions && sessions.length > 0) {
+                    // Sort sessions by date, newest first
+                    sessions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
                     sessions.forEach(session => {
-                        const option = document.createElement('option');
-                        option.value = session.file;
-                        const date = new Date(session.timestamp);
-                        option.textContent = `${date.toLocaleDateString()} ${date.toLocaleTimeString()} (${session.totalAds || 0} ads)`;
-                        selector.appendChild(option);
+                        // Only add valid session files
+                        if (session.file && session.file.includes('.json')) {
+                            const option = document.createElement('option');
+                            option.value = session.file;
+
+                            // Parse date safely
+                            let dateStr = 'Unknown date';
+                            try {
+                                const date = new Date(session.timestamp);
+                                if (!isNaN(date.getTime())) {
+                                    dateStr = `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
+                                }
+                            } catch (e) {
+                                console.error('Invalid date:', session.timestamp);
+                            }
+
+                            option.textContent = `${dateStr} (${session.totalAds || 0} ads)`;
+                            selector.appendChild(option);
+                        }
                     });
                 }
             } catch (error) {
@@ -630,16 +647,24 @@
                     const currentResponse = await fetch('/data/current_session.json');
                     if (currentResponse.ok) {
                         const currentData = await currentResponse.json();
+                        console.log('Current session data:', currentData);
+
                         if (currentData.sessionFile) {
                             // Load the referenced session file
                             const sessionResponse = await fetch(`/data/sessions/${currentData.sessionFile}`);
                             if (sessionResponse.ok) {
                                 const sessionData = await sessionResponse.json();
                                 adsData = sessionData.ads || [];
+                                console.log(`Loaded ${adsData.length} ads from current session`);
                                 displayAds(adsData);
                                 updateStats(adsData);
                                 loading.style.display = 'none';
+
+                                // Update the session info display
+                                document.getElementById('currentSessionInfo').textContent = `(${currentData.sessionFile})`;
                                 return;
+                            } else {
+                                console.error('Session file not found:', currentData.sessionFile);
                             }
                         }
                     }
@@ -896,16 +921,24 @@
 
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', async () => {
-            // Load available sessions
+            console.log('Page loading...');
+
+            // Load available sessions first
             await loadSessions();
 
             // Connect to real-time updates
             connectToRealTimeUpdates();
 
-            // Load the current session by default
-            await loadSession('');
-
-            // No auto-refresh - only manual refresh via button
+            // Check if there's a valid session in the dropdown
+            const selector = document.getElementById('sessionSelector');
+            if (selector && selector.options.length > 1) {
+                // Select the first actual session (not "Current Session")
+                selector.selectedIndex = 1;
+                await loadSession(selector.value);
+            } else {
+                // No sessions available, try current session
+                await loadSession('');
+            }
         });
     </script>
 </body>
