@@ -220,37 +220,33 @@
         .ad-headline {
             font-size: 16px;
             font-weight: 600;
-            color: #1f2937;
+            color: #333;
             margin-bottom: 10px;
-            line-height: 1.4;
+            line-height: 1.5;
         }
 
         .ad-body {
+            color: #666;
             font-size: 14px;
-            color: #6b7280;
-            margin-bottom: 15px;
-            line-height: 1.5;
-            display: -webkit-box;
-            -webkit-line-clamp: 3;
-            -webkit-box-orient: vertical;
-            overflow: hidden;
+            line-height: 1.6;
+            margin-bottom: 10px;
         }
 
         .ad-link {
             display: inline-block;
-            padding: 8px 16px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
+            color: #667eea;
             text-decoration: none;
+            padding: 8px 12px;
+            border: 1px solid #667eea;
             border-radius: 8px;
             font-size: 13px;
-            font-weight: 500;
             transition: all 0.3s;
         }
 
         .ad-link:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+            background: #667eea;
+            color: white;
+            transform: translateY(-1px);
         }
 
         .ad-meta {
@@ -458,6 +454,19 @@
                 .replace(/'/g, "&#039;");
         }
 
+        // Download image function
+        function downloadImage(imageUrl, adTitle) {
+            if (!imageUrl) return;
+
+            const link = document.createElement('a');
+            link.href = imageUrl;
+            link.download = `ad-image-${adTitle || 'download'}-${Date.now()}.jpg`;
+            link.target = '_blank';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
         // Display ads function (same as main page)
         function displayAds(ads, isNewAd = false) {
             const grid = document.getElementById('adsGrid');
@@ -503,16 +512,13 @@
                         <div class="ad-advertiser">${safeAdvertiser}</div>
                         <div class="ad-headline">${safeHeadline || 'No headline'}</div>
                         ${safeBody ? `<div class="ad-body">${safeBody}</div>` : ''}
-                        <div style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap;">
+                        <div style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; ${safeLink && safeImage ? 'justify-content: space-between' : ''}">
                             ${safeLink ? `<a href="${safeLink}" target="_blank" class="ad-link">🔗 Visit Ad</a>` : ''}
                             ${safeImage ?
-                                `<a href="${safeImage}" target="_blank" style="padding: 8px 16px; background: #f3f4f6; color: #6b7280; text-decoration: none; border-radius: 8px; font-size: 13px; font-weight: 500;">
-                                    🖼️ View Image
-                                </a>` : ''}
+                                `<a onclick="downloadImage('${safeImage.replace(/'/g, "\\'")}',' ${safeHeadline.replace(/'/g, "\\'")}')" class="ad-link" style="cursor: pointer; ${!safeLink ? 'margin-left: auto;' : ''}">📥 Download Image</a>` : ''}
                         </div>
-                        <div class="ad-meta">
-                            <span>⏰ ${formatTime(ad.timestamp)}</span>
-                            <span>${ad.containerId || ad.sessionId || ''}</span>
+                        <div style="font-size: 11px; color: #888; margin-top: 8px;">
+                            ${new Date(ad.timestamp).toLocaleString()}
                         </div>
                     </div>
                 `;

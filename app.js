@@ -348,38 +348,68 @@ app.get('/api/ads', async (req, res) => {
                 res.status(404).json({ error: 'Session not found' });
             }
         } else {
-            // Load current session
+            // Load current session or most recent session
             const currentSessionFile = path.join(__dirname, 'data', 'current_session.json');
+            let sessionFile = null;
+
+            // First try to load from current_session.json
             if (await fs.exists(currentSessionFile)) {
                 const currentSession = await fs.readJson(currentSessionFile);
-                const sessionFile = path.join(__dirname, 'data', 'sessions', currentSession.sessionFile);
-                if (await fs.exists(sessionFile)) {
-                    const sessionData = await fs.readJson(sessionFile);
+                const potentialFile = path.join(__dirname, 'data', 'sessions', currentSession.sessionFile);
+                if (await fs.exists(potentialFile)) {
+                    sessionFile = potentialFile;
+                }
+            }
 
-                    let ads = sessionData.ads || [];
+            // If current session file doesn't exist, try to find the most recent session
+            if (!sessionFile) {
+                const sessionsDir = path.join(__dirname, 'data', 'sessions');
+                const sessionFiles = await fs.readdir(sessionsDir);
+                const workerSessions = sessionFiles
+                    .filter(f => f.startsWith('worker_') && f.endsWith('.json'))
+                    .sort().reverse(); // Get most recent first
 
-                    // Apply time filtering
-                    if (refresh === 'true') {
-                        const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
-                        ads = ads.filter(ad => {
-                            const adTime = new Date(ad.timestamp).getTime();
-                            return adTime > fiveMinutesAgo;
-                        });
-                    } else if (timeframe) {
-                        const timeframeMinutes = parseInt(timeframe);
-                        if (!isNaN(timeframeMinutes)) {
-                            const timeframeAgo = Date.now() - (timeframeMinutes * 60 * 1000);
-                            ads = ads.filter(ad => {
-                                const adTime = new Date(ad.timestamp).getTime();
-                                return adTime > timeframeAgo;
-                            });
+                if (workerSessions.length > 0) {
+                    // Find the first session with ads
+                    for (const file of workerSessions) {
+                        const testFile = path.join(sessionsDir, file);
+                        try {
+                            const testData = await fs.readJson(testFile);
+                            if (testData.ads && testData.ads.length > 0) {
+                                sessionFile = testFile;
+                                break;
+                            }
+                        } catch (e) {
+                            // Skip invalid files
                         }
                     }
-
-                    res.json(ads);
-                } else {
-                    res.json([]);
                 }
+            }
+
+            if (sessionFile) {
+                const sessionData = await fs.readJson(sessionFile);
+
+                let ads = sessionData.ads || [];
+
+                // Apply time filtering
+                if (refresh === 'true') {
+                    const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
+                    ads = ads.filter(ad => {
+                        const adTime = new Date(ad.timestamp).getTime();
+                        return adTime > fiveMinutesAgo;
+                    });
+                } else if (timeframe) {
+                    const timeframeMinutes = parseInt(timeframe);
+                    if (!isNaN(timeframeMinutes)) {
+                        const timeframeAgo = Date.now() - (timeframeMinutes * 60 * 1000);
+                        ads = ads.filter(ad => {
+                            const adTime = new Date(ad.timestamp).getTime();
+                            return adTime > timeframeAgo;
+                        });
+                    }
+                }
+
+                res.json(ads);
             } else {
                 res.json([]);
             }
