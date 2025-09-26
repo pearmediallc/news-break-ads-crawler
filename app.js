@@ -13,8 +13,16 @@ const app = express();
 // Store active extraction processes
 const activeExtractions = new Map();
 
-// Initialize background extraction service
+// Initialize background extraction service with update callback
 const backgroundExtractor = new BackgroundExtractionService();
+
+// Set up callback to broadcast updates to SSE clients
+backgroundExtractor.onUpdate = (data) => {
+    // Broadcast to all connected SSE clients
+    if (typeof broadcastUpdate === 'function') {
+        broadcastUpdate(data);
+    }
+};
 
 // Middleware
 app.use(express.json());

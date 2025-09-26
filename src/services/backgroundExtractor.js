@@ -276,6 +276,19 @@ class BackgroundExtractionService {
 
     const { type, data } = message;
 
+    // Broadcast updates to SSE clients if callback is set
+    if (this.onUpdate && typeof this.onUpdate === 'function') {
+        // Send the message to SSE clients
+        if (type === 'ads_update' && data.newAds && data.newAds.length > 0) {
+            this.onUpdate({
+                type: 'new_ads',
+                newAds: data.newAds,
+                totalAds: data.totalAds,
+                sessionId: extraction.sessionId || extractionId
+            });
+        }
+    }
+
     switch (type) {
       case 'log':
         extraction.logs.push({

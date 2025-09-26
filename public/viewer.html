@@ -536,13 +536,25 @@
             }).join('');
 
             if (isNewAd) {
-                // Prepend new ads
+                // For new ads during live extraction
+                // First check if grid has "no ads" message and clear it
+                if (grid.querySelector('.no-ads')) {
+                    grid.innerHTML = '';
+                }
+
+                // Prepend new ads to the beginning
                 const tempDiv = document.createElement('div');
                 tempDiv.innerHTML = adsHtml;
-                while (tempDiv.firstChild) {
-                    grid.insertBefore(tempDiv.firstChild, grid.firstChild);
-                }
+
+                // Insert each new ad at the beginning
+                const children = Array.from(tempDiv.children);
+                children.reverse().forEach(child => {
+                    grid.insertBefore(child, grid.firstChild);
+                });
+
+                console.log(`Added ${children.length} new ad cards to display`);
             } else {
+                // Replace all content
                 grid.innerHTML = adsHtml;
             }
 
@@ -840,13 +852,22 @@
         // Handle real-time updates
         function handleRealTimeUpdate(data) {
             console.log('📨 Real-time update:', data);
+            console.log('Current session file:', currentSessionFile);
 
             // Only process updates if viewing current session (empty or null)
-            if (currentSessionFile && currentSessionFile !== '') return;
+            if (currentSessionFile && currentSessionFile !== '') {
+                console.log('Not processing update - viewing specific session');
+                return;
+            }
 
             if (data.type === 'new_ads') {
                 // Handle new ads from extraction
                 console.log('🆕 New ads received:', data.newAds);
+                console.log('Data structure:', {
+                    hasNewAds: !!data.newAds,
+                    newAdsLength: data.newAds?.length,
+                    firstAd: data.newAds?.[0]
+                });
 
                 if (data.newAds && data.newAds.length > 0) {
                     // Find ads not already displayed
@@ -858,19 +879,19 @@
                     if (newAds.length > 0) {
                         console.log(`✅ Adding ${newAds.length} new ads to display`);
 
+                        // Mark these ads as seen to prevent duplicates
+                        newAds.forEach(ad => {
+                            const adId = `${ad.advertiser}_${ad.headline}_${ad.timestamp}`;
+                            seenAdIds.add(adId);
+                        });
+
                         // Add new ads to the beginning of our data
                         adsData.unshift(...newAds);
-
-                        // If this is the first ad, clear the waiting message
-                        const grid = document.getElementById('adsGrid');
-                        if (grid && grid.querySelector('.no-ads')) {
-                            grid.innerHTML = '';
-                        }
 
                         // Display only the new ads with animation
                         displayAds(newAds, true);
 
-                        // Update statistics
+                        // Update statistics with all ads
                         updateStats(adsData);
                     }
                 }
