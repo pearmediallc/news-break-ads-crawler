@@ -381,7 +381,7 @@
                         <option value="1440">Last 24 hours</option>
                     </select>
                 </div>
-                <button class="btn btn-success" onclick="refreshAds()">
+                <button class="btn btn-success" onclick="loadSession(document.getElementById('sessionSelector').value)">
                     🔄 Refresh
                 </button>
             </div>
@@ -579,18 +579,100 @@
         async function loadSession(sessionFile) {
             currentSessionFile = sessionFile;
 
-            if (!sessionFile) {
-                // Load current session
-                await refreshAds();
-                document.getElementById('currentSessionInfo').textContent = '(Current)';
+            // Clear existing ads
+            adsData = [];
+            seenAdIds.clear();
+
+            if (!sessionFile || sessionFile === '') {
+                // Current session - load live/real-time data
+                console.log('Loading current/live session');
+                document.getElementById('currentSessionInfo').textContent = '(Live/Current)';
+
+                // Check for active extraction
+                try {
+                    const activeResponse = await fetch('/api/extract/active');
+                    const activeData = await activeResponse.json();
+
+                    if (activeData.success && activeData.activeExtractions && activeData.activeExtractions.length > 0) {
+                        // There's an active extraction - show live indicator
+                        const indicator = document.getElementById('realtimeIndicator');
+                        if (indicator) {
+                            indicator.style.display = 'inline-block';
+                        }
+                        console.log('Active extraction detected - waiting for real-time updates');
+
+                        // Clear the grid and show waiting message
+                        const grid = document.getElementById('adsGrid');
+                        grid.innerHTML = `
+                            <div class="no-ads">
+                                <h3>Live Extraction Active</h3>
+                                <p>Waiting for new ads from the active extraction...</p>
+                                <div class="spinner"></div>
+                            </div>
+                        `;
+
+                        // Real-time updates will populate the ads
+                        updateStats([]);
+                    } else {
+                        // No active extraction - try to load from current_session.json
+                        const currentResponse = await fetch('/data/current_session.json');
+                        if (currentResponse.ok) {
+                            const currentData = await currentResponse.json();
+                            if (currentData.sessionFile) {
+                                // Load the referenced session file
+                                const sessionResponse = await fetch(`/data/sessions/${currentData.sessionFile}`);
+                                if (sessionResponse.ok) {
+                                    const sessionData = await sessionResponse.json();
+                                    adsData = sessionData.ads || [];
+                                    displayAds(adsData);
+                                    updateStats(adsData);
+                                }
+                            }
+                        } else {
+                            // No current session - try API
+                            await refreshAds();
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error checking active extraction:', error);
+                    // Fall back to API
+                    await refreshAds();
+                }
             } else {
-                // Load specific session
+                // Specific completed session - load all ads from file
+                console.log('Loading completed session:', sessionFile);
+                document.getElementById('currentSessionInfo').textContent = `(${sessionFile})`;
+
+                // Hide real-time indicator for completed sessions
+                const indicator = document.getElementById('realtimeIndicator');
+                if (indicator) {
+                    indicator.style.display = 'none';
+                }
+
                 try {
                     const response = await fetch(`/data/sessions/${sessionFile}`);
-                    const data = await response.json();
-                    adsData = data.ads || [];
-                    displayAds(adsData);
-                    document.getElementById('currentSessionInfo').textContent = `(${sessionFile})`;
+                    if (response.ok) {
+                        const data = await response.json();
+                        adsData = data.ads || [];
+
+                        // Mark all ads as seen to avoid animation
+                        adsData.forEach(ad => {
+                            const adId = `${ad.advertiser}_${ad.headline}_${ad.timestamp}`;
+                            seenAdIds.add(adId);
+                        });
+
+                        displayAds(adsData);
+                        updateStats(adsData);
+                    } else {
+                        console.error('Session file not found:', sessionFile);
+                        const grid = document.getElementById('adsGrid');
+                        grid.innerHTML = `
+                            <div class="no-ads">
+                                <h3>Session Not Found</h3>
+                                <p>The selected session file could not be loaded.</p>
+                            </div>
+                        `;
+                    }
                 } catch (error) {
                     console.error('Failed to load session:', error);
                 }
@@ -684,8 +766,8 @@
         function handleRealTimeUpdate(data) {
             console.log('📨 Real-time update:', data);
 
-            // Only process updates if viewing current session
-            if (currentSessionFile) return;
+            // Only process updates if viewing current session (empty or null)
+            if (currentSessionFile && currentSessionFile !== '') return;
 
             if (data.type === 'new_ads') {
                 // Handle new ads from extraction
@@ -703,6 +785,12 @@
 
                         // Add new ads to the beginning of our data
                         adsData.unshift(...newAds);
+
+                        // If this is the first ad, clear the waiting message
+                        const grid = document.getElementById('adsGrid');
+                        if (grid && grid.querySelector('.no-ads')) {
+                            grid.innerHTML = '';
+                        }
 
                         // Display only the new ads with animation
                         displayAds(newAds, true);
@@ -757,15 +845,39 @@
         }
 
         // Initialize on page load
-        document.addEventListener('DOMContentLoaded', () => {
-            loadSessions();
-            refreshAds();
+        document.addEventListener('DOMContentLoaded', async () => {
+            // Connect to real-time updates first
             connectToRealTimeUpdates();
 
-            // Auto-refresh every 30 seconds if on current session
-            setInterval(() => {
-                if (!currentSessionFile) {
-                    refreshAds();
+            // Load available sessions
+            await loadSessions();
+
+            // By default, start with "Current Session" (empty value)
+            // This will either show live extraction or the most recent session
+            const selector = document.getElementById('sessionSelector');
+            if (selector) {
+                selector.value = ''; // Set to Current Session
+            }
+
+            // Load the current/live session
+            await loadSession('');
+
+            // Auto-refresh for live sessions
+            setInterval(async () => {
+                if (!currentSessionFile || currentSessionFile === '') {
+                    // Check if there's an active extraction
+                    try {
+                        const activeResponse = await fetch('/api/extract/active');
+                        const activeData = await activeResponse.json();
+
+                        if (!activeData.success || !activeData.activeExtractions || activeData.activeExtractions.length === 0) {
+                            // No active extraction, refresh from API periodically
+                            await refreshAds();
+                        }
+                        // If there's an active extraction, real-time updates will handle it
+                    } catch (error) {
+                        console.error('Error checking active extraction:', error);
+                    }
                 }
             }, 30000);
         });
