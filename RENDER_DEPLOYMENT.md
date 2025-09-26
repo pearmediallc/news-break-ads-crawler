@@ -151,8 +151,10 @@ To deploy updates:
 ### Common Issues:
 
 1. **Login fails with "Invalid credentials"**
-   - Ensure the user database was created
-   - Check environment variables are set
+   - **Solution**: The app now auto-initializes passwords on startup
+   - Set `FORCE_RESET_PASSWORDS=true` in Render environment variables
+   - The `prestart` script will recreate password hashes
+   - Check logs for "User initialization complete" message
 
 2. **Extraction fails**
    - Verify Chrome is installed (check logs)

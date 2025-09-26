@@ -24,6 +24,10 @@ services:
         value: true
       - key: ENABLE_ROLE_BASED_ACCESS
         value: true
+      - key: ADMIN_PASSWORD
+        value: admin123
+      - key: FORCE_RESET_PASSWORDS
+        value: true
     autoDeploy: true
     disk:
       name: data-storage

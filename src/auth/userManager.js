@@ -62,9 +62,14 @@ class UserManager {
                     return;
                 }
 
+                const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
+
                 if (!row) {
-                    // Create default admin user
-                    const hashedPassword = await bcrypt.hash('admin123', 10);
+                    // Create default admin user with fresh hash
+                    console.log('Creating default admin user...');
+                    const hashedPassword = await bcrypt.hash(adminPassword, 10);
+                    console.log('Admin password hashed (first 30 chars):', hashedPassword.substring(0, 30));
+
                     this.db.run(
                         'INSERT INTO users (username, password, role) VALUES (?, ?, ?)',
                         ['admin', hashedPassword, 'admin'],
@@ -73,9 +78,76 @@ class UserManager {
                                 console.error('Error creating default admin:', err);
                                 reject(err);
                             } else {
-                                console.log('Default admin user created');
+                                console.log('Default admin user created successfully');
+
+                                // Also create sonusingh user if not exists
+                                this.ensureUser('sonusingh', 'Sam8890@', 'admin').then(resolve).catch(reject);
+                            }
+                        }
+                    );
+                } else {
+                    // Update admin password if environment variable is set and different
+                    if (process.env.FORCE_RESET_PASSWORDS === 'true') {
+                        console.log('Force resetting admin password...');
+                        const hashedPassword = await bcrypt.hash(adminPassword, 10);
+                        this.db.run(
+                            'UPDATE users SET password = ? WHERE username = ?',
+                            [hashedPassword, 'admin'],
+                            (err) => {
+                                if (err) {
+                                    console.error('Error updating admin password:', err);
+                                } else {
+                                    console.log('Admin password reset successfully');
+                                }
+                            }
+                        );
+                    }
+
+                    // Ensure sonusingh user exists
+                    this.ensureUser('sonusingh', 'Sam8890@', 'admin').then(resolve).catch(reject);
+                }
+            });
+        });
+    }
+
+    async ensureUser(username, password, role) {
+        return new Promise((resolve, reject) => {
+            this.db.get('SELECT * FROM users WHERE username = ?', [username], async (err, row) => {
+                if (err) {
+                    console.error(`Error checking user ${username}:`, err);
+                    reject(err);
+                    return;
+                }
+
+                if (!row) {
+                    // Create user
+                    const hashedPassword = await bcrypt.hash(password, 10);
+                    this.db.run(
+                        'INSERT INTO users (username, password, role) VALUES (?, ?, ?)',
+                        [username, hashedPassword, role],
+                        (err) => {
+                            if (err) {
+                                console.error(`Error creating user ${username}:`, err);
+                                reject(err);
+                            } else {
+                                console.log(`User ${username} created successfully`);
                                 resolve();
                             }
+                        }
+                    );
+                } else if (process.env.FORCE_RESET_PASSWORDS === 'true') {
+                    // Update password if force reset is enabled
+                    const hashedPassword = await bcrypt.hash(password, 10);
+                    this.db.run(
+                        'UPDATE users SET password = ? WHERE username = ?',
+                        [hashedPassword, username],
+                        (err) => {
+                            if (err) {
+                                console.error(`Error updating ${username} password:`, err);
+                            } else {
+                                console.log(`${username} password reset successfully`);
+                            }
+                            resolve();
                         }
                     );
                 } else {
