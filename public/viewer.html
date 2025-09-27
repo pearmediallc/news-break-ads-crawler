@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ad Viewer - NewsBreak Ads</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -310,12 +311,50 @@
             font-weight: 500;
         }
 
-        .filter-group select {
+        .filter-group select,
+        .filter-group input {
             padding: 8px 12px;
             border: 2px solid #e5e7eb;
             border-radius: 8px;
             font-size: 14px;
             min-width: 200px;
+        }
+
+        .filter-group input[type="datetime-local"] {
+            min-width: 180px;
+        }
+
+        .export-buttons {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .time-filter-section {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 15px;
+            margin-top: 15px;
+        }
+
+        .quick-filters {
+            display: flex;
+            gap: 5px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+
+        .quick-filter-btn {
+            padding: 4px 8px;
+            border-radius: 4px;
+            border: 1px solid #d1d5db;
+            background: white;
+            font-size: 11px;
+            cursor: pointer;
+        }
+
+        .quick-filter-btn:hover {
+            background: #f3f4f6;
         }
 
         @media (max-width: 768px) {
@@ -356,26 +395,44 @@
             <div class="filters-row">
                 <div class="filter-group">
                     <label>Session:</label>
-                    <select id="sessionSelector" onchange="loadSession(this.value)">
+                    <select id="sessionSelector" onchange="loadSession(this.value); updateSessionFilterInfo();">
                         <option value="">Current Session</option>
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label>Time Filter:</label>
-                    <select id="timeframeFilter" onchange="applyTimeFilter()">
-                        <option value="">All Time</option>
-                        <option value="5">Last 5 min</option>
-                        <option value="15">Last 15 min</option>
-                        <option value="30">Last 30 min</option>
-                        <option value="60">Last 1 hour</option>
-                        <option value="180">Last 3 hours</option>
-                        <option value="720">Last 12 hours</option>
-                        <option value="1440">Last 24 hours</option>
                     </select>
                 </div>
                 <button class="btn btn-success" onclick="refreshCurrentView()">
                     🔄 Refresh
                 </button>
+                <button class="btn btn-primary" onclick="loadAllFromDatabase()" title="Load ads from database">
+                    🗄️ Load DB
+                </button>
+            </div>
+
+            <div class="time-filter-section">
+                <div style="display: flex; align-items: center; gap: 10px; font-weight: 600; color: #374151;">
+                    <span id="timeFilterMode">🕒 Custom Time Range</span>
+                    <span id="sessionFilterInfo" style="font-size: 12px; color: #6b7280; font-weight: normal;"></span>
+                </div>
+
+                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px;">
+                    <label style="font-size: 12px; color: #374151; font-weight: 500;">From:</label>
+                    <input type="datetime-local" id="customTimeFrom" style="padding: 6px 8px; border-radius: 6px; border: 1px solid #d1d5db; font-size: 12px; min-width: 160px;">
+                    <label style="font-size: 12px; color: #374151; font-weight: 500;">To:</label>
+                    <input type="datetime-local" id="customTimeTo" style="padding: 6px 8px; border-radius: 6px; border: 1px solid #d1d5db; font-size: 12px; min-width: 160px;">
+                    <button class="btn btn-primary" onclick="applyCustomTimeFilter()" style="padding: 8px 16px; font-size: 13px;">
+                        Apply Filter
+                    </button>
+                    <button class="btn" onclick="clearTimeFilters()" style="padding: 8px 16px; font-size: 13px; background: #f3f4f6; color: #374151;">
+                        Clear
+                    </button>
+                </div>
+
+                <div class="quick-filters">
+                    <span style="font-size: 11px; color: #6b7280; margin-right: 5px;">Quick:</span>
+                    <button onclick="setQuickRange('today')" class="quick-filter-btn">Today</button>
+                    <button onclick="setQuickRange('yesterday')" class="quick-filter-btn">Yesterday</button>
+                    <button onclick="setQuickRange('week')" class="quick-filter-btn">This Week</button>
+                    <button onclick="setQuickRange('last24h')" class="quick-filter-btn">Last 24h</button>
+                </div>
             </div>
         </div>
 
@@ -401,6 +458,17 @@
         <div class="ads-container">
             <div class="ads-header">
                 <h3>Extracted Ads <span id="currentSessionInfo" style="font-size: 14px; color: #666;"></span></h3>
+                <div class="export-buttons">
+                    <button class="btn btn-success" onclick="exportData('json')" style="min-width: 120px;">
+                        💾 Export JSON
+                    </button>
+                    <button class="btn btn-success" onclick="exportData('csv')" style="min-width: 120px;">
+                        📊 Export CSV
+                    </button>
+                    <button class="btn btn-success" onclick="exportExcel()" style="min-width: 120px;">
+                        📑 Export Excel
+                    </button>
+                </div>
             </div>
             <div class="loading" id="adsLoading">
                 <div class="spinner"></div>
@@ -778,23 +846,292 @@
             }
         }
 
-        // Apply time filter
-        function applyTimeFilter() {
-            const filter = document.getElementById('timeframeFilter').value;
+        // Apply custom time filter with date range
+        async function applyCustomTimeFilter() {
+            const fromDate = document.getElementById('customTimeFrom').value;
+            const toDate = document.getElementById('customTimeTo').value;
 
-            if (!filter) {
-                displayAds(adsData);
+            if (!fromDate || !toDate) {
+                alert('Please select both start and end dates');
                 return;
             }
 
-            const minutes = parseInt(filter);
-            const cutoff = new Date(Date.now() - minutes * 60000);
+            const fromTime = new Date(fromDate);
+            const toTime = new Date(toDate);
 
-            const filteredAds = adsData.filter(ad => {
-                return new Date(ad.timestamp) >= cutoff;
-            });
+            if (fromTime >= toTime) {
+                alert('End date must be after start date');
+                return;
+            }
 
-            displayAds(filteredAds);
+            // Filter current ads data
+            if (adsData && adsData.length > 0) {
+                const filteredAds = adsData.filter(ad => {
+                    const adTime = new Date(ad.timestamp);
+                    return adTime >= fromTime && adTime <= toTime;
+                });
+
+                displayAds(filteredAds);
+                updateStats(filteredAds);
+
+                // Update session info
+                document.getElementById('sessionFilterInfo').textContent =
+                    `Filtered: ${filteredAds.length} of ${adsData.length} ads`;
+            } else {
+                // If no ads loaded, try to load from database with date filter
+                await loadAllFromDatabase(fromDate, toDate);
+            }
+        }
+
+        // Clear time filters
+        async function clearTimeFilters() {
+            // Clear the date inputs
+            document.getElementById('customTimeFrom').value = '';
+            document.getElementById('customTimeTo').value = '';
+
+            // Clear filter info
+            document.getElementById('sessionFilterInfo').textContent = '';
+
+            // Reload all ads
+            if (adsData && adsData.length > 0) {
+                displayAds(adsData);
+                updateStats(adsData);
+            }
+        }
+
+        // Set quick date ranges
+        function setQuickRange(range) {
+            const now = new Date();
+            const fromInput = document.getElementById('customTimeFrom');
+            const toInput = document.getElementById('customTimeTo');
+
+            let fromDate, toDate;
+
+            switch (range) {
+                case 'today':
+                    fromDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                    toDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+                    break;
+                case 'yesterday':
+                    fromDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+                    toDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                    break;
+                case 'week':
+                    fromDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay());
+                    toDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+                    break;
+                case 'last24h':
+                    fromDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+                    toDate = now;
+                    break;
+            }
+
+            // Format dates for datetime-local input
+            fromInput.value = fromDate.toISOString().slice(0, 16);
+            toInput.value = toDate.toISOString().slice(0, 16);
+
+            // Auto-apply the filter
+            applyCustomTimeFilter();
+        }
+
+        // Load all ads from database
+        async function loadAllFromDatabase(startDate = null, endDate = null) {
+            console.log('Loading ads from database...');
+            const loading = document.getElementById('adsLoading');
+            loading.style.display = 'block';
+
+            try {
+                // Check if a session is selected
+                const sessionSelector = document.getElementById('sessionSelector');
+                const selectedSession = sessionSelector ? sessionSelector.value : '';
+
+                // Build filters
+                const filters = {};
+                if (selectedSession) {
+                    const sessionId = selectedSession.replace('worker_', '').replace('.json', '');
+                    filters.sessionIds = [sessionId];
+                }
+
+                // Add date range filter if provided
+                if (startDate && endDate) {
+                    filters.dateRange = {
+                        start: startDate,
+                        end: endDate
+                    };
+                }
+
+                // Query ads from database
+                const response = await fetch('/api/query/ads/query', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        filters: filters,
+                        sort: { field: 'timestamp', direction: 'DESC' },
+                        pagination: { limit: 1000000, offset: 0 }
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success && result.data && result.data.length > 0) {
+                    // Map database field names to frontend field names
+                    const mappedAds = result.data.map(dbAd => ({
+                        id: dbAd.id || dbAd.ad_id,
+                        advertiser: dbAd.ad_network || dbAd.advertiser || 'Unknown',
+                        headline: dbAd.heading || dbAd.headline || '',
+                        body: dbAd.description || dbAd.body || '',
+                        image: dbAd.image_url || dbAd.image || '',
+                        link: dbAd.link_url || dbAd.link || '',
+                        timestamp: dbAd.timestamp || dbAd.created_at || new Date().toISOString()
+                    }));
+
+                    adsData = mappedAds;
+                    displayAds(mappedAds);
+                    updateStats(mappedAds);
+
+                    // Update session info
+                    document.getElementById('currentSessionInfo').textContent =
+                        selectedSession ? `(Database: ${selectedSession} - ${mappedAds.length} ads)` :
+                        `(Database: All Sessions - ${mappedAds.length} ads)`;
+                } else {
+                    document.getElementById('adsGrid').innerHTML = `
+                        <div class="no-ads">
+                            <h3>No ads found in database</h3>
+                            <p>No ads found for the selected criteria.</p>
+                        </div>
+                    `;
+                    updateStats([]);
+                }
+            } catch (error) {
+                console.error('Failed to load from database:', error);
+                document.getElementById('adsGrid').innerHTML = `
+                    <div class="no-ads">
+                        <h3>Error Loading Database</h3>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+
+        // Export functions
+        function exportData(format) {
+            if (!adsData || adsData.length === 0) {
+                alert('No ads to export');
+                return;
+            }
+
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const filename = `ads_export_${timestamp}`;
+
+            if (format === 'json') {
+                // Export as JSON
+                const jsonData = JSON.stringify(adsData, null, 2);
+                const blob = new Blob([jsonData], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${filename}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+            } else if (format === 'csv') {
+                // Export as CSV
+                const csvContent = convertToCSV(adsData);
+                const blob = new Blob([csvContent], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${filename}.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+        }
+
+        function exportExcel() {
+            if (!adsData || adsData.length === 0) {
+                alert('No ads to export');
+                return;
+            }
+
+            // Prepare data for Excel
+            const excelData = adsData.map(ad => ({
+                'Advertiser': ad.advertiser || '',
+                'Headline': ad.headline || '',
+                'Description': ad.body || '',
+                'Link': ad.link || '',
+                'Image URL': ad.image || '',
+                'Timestamp': new Date(ad.timestamp).toLocaleString()
+            }));
+
+            // Create worksheet
+            const ws = XLSX.utils.json_to_sheet(excelData);
+
+            // Set column widths
+            ws['!cols'] = [
+                { wch: 20 }, // Advertiser
+                { wch: 40 }, // Headline
+                { wch: 60 }, // Description
+                { wch: 50 }, // Link
+                { wch: 50 }, // Image URL
+                { wch: 20 }  // Timestamp
+            ];
+
+            // Create workbook
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Ads');
+
+            // Generate filename
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const filename = `ads_export_${timestamp}.xlsx`;
+
+            // Save file
+            XLSX.writeFile(wb, filename);
+        }
+
+        function convertToCSV(data) {
+            if (!data || data.length === 0) return '';
+
+            // Define CSV headers
+            const headers = ['Advertiser', 'Headline', 'Description', 'Link', 'Image URL', 'Timestamp'];
+
+            // Create CSV rows
+            const rows = data.map(ad => [
+                escapeCSV(ad.advertiser || ''),
+                escapeCSV(ad.headline || ''),
+                escapeCSV(ad.body || ''),
+                escapeCSV(ad.link || ''),
+                escapeCSV(ad.image || ''),
+                new Date(ad.timestamp).toLocaleString()
+            ]);
+
+            // Combine headers and rows
+            return [headers, ...rows].map(row => row.join(',')).join('\n');
+        }
+
+        function escapeCSV(str) {
+            if (str === null || str === undefined) return '';
+            str = String(str);
+            if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+                return '"' + str.replace(/"/g, '""') + '"';
+            }
+            return str;
+        }
+
+        // Update session filter info
+        function updateSessionFilterInfo() {
+            const sessionSelector = document.getElementById('sessionSelector');
+            const sessionFilterInfo = document.getElementById('sessionFilterInfo');
+            const currentSession = sessionSelector.value;
+
+            if (currentSession) {
+                const selectedOption = sessionSelector.options[sessionSelector.selectedIndex];
+                sessionFilterInfo.textContent = `Filtering within: ${selectedOption.textContent}`;
+            } else {
+                sessionFilterInfo.textContent = 'Viewing current session';
+            }
         }
 
         // Refresh current view
@@ -1074,6 +1411,9 @@
             if (selector) {
                 selector.value = '';
             }
+
+            // Update session filter info
+            updateSessionFilterInfo();
         });
     </script>
 </body>
