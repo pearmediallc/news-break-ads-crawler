@@ -1495,20 +1495,40 @@
                 const sessionSelector = document.getElementById('sessionSelector');
                 let sessionToLoad = sessionSelector ? sessionSelector.value : '';
 
-                // If no session selected, try to get the current session
-                if (!sessionToLoad || sessionToLoad === '') {
-                    const currentSessionResponse = await fetch('/api/sessions/current');
-                    const currentSessionData = await currentSessionResponse.json();
+                // Clear existing seenAdIds to ensure fresh state
+                seenAdIds.clear();
 
-                    if (currentSessionData && currentSessionData.sessionFile) {
-                        sessionToLoad = currentSessionData.sessionFile;
-                        console.log('Loading current session:', sessionToLoad);
+                // If "Current Session" is selected or nothing is selected
+                if (!sessionToLoad || sessionToLoad === '' || sessionToLoad === 'current') {
+                    // Check for active extraction first
+                    const activeResponse = await fetch('/api/extract/active');
+                    if (activeResponse.ok) {
+                        const activeData = await activeResponse.json();
+                        if (activeData.success && activeData.activeExtractions && activeData.activeExtractions.length > 0) {
+                            const activeExtraction = activeData.activeExtractions[0];
+                            if (activeExtraction.sessionFile) {
+                                sessionToLoad = activeExtraction.sessionFile;
+                                console.log('Active extraction found, loading session:', sessionToLoad);
+                            }
+                        }
+                    }
+
+                    // If still no session, try to get current session
+                    if (!sessionToLoad) {
+                        const currentSessionResponse = await fetch('/api/sessions/current');
+                        if (currentSessionResponse.ok) {
+                            const currentSessionData = await currentSessionResponse.json();
+                            if (currentSessionData && currentSessionData.sessionFile) {
+                                sessionToLoad = currentSessionData.sessionFile;
+                                console.log('Loading current session:', sessionToLoad);
+                            }
+                        }
                     }
                 }
 
                 // Build the URL with cache buster
                 let url = '/api/ads';
-                if (sessionToLoad) {
+                if (sessionToLoad && sessionToLoad !== 'current') {
                     url = `/api/ads?session=${sessionToLoad}&t=${Date.now()}`;
                 } else {
                     url = `/api/ads?t=${Date.now()}`;
@@ -1525,8 +1545,21 @@
                 const newAdsData = await response.json();
                 console.log(`Received ${newAdsData.length} ads from server`);
 
-                // Update the global adsData
-                adsData = newAdsData;
+                // Clear and update the global adsData
+                adsData = [];
+
+                // Remove duplicates based on ID and content
+                const uniqueAdsMap = new Map();
+                newAdsData.forEach(ad => {
+                    // Create unique key
+                    const key = ad.id || `${ad.advertiser}_${ad.headline}_${ad.timestamp}`;
+                    if (!uniqueAdsMap.has(key)) {
+                        uniqueAdsMap.set(key, ad);
+                    }
+                });
+
+                adsData = Array.from(uniqueAdsMap.values());
+                console.log(`Filtered to ${adsData.length} unique ads`);
 
                 // Force display update
                 if (adsData && adsData.length > 0) {

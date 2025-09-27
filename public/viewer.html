@@ -914,15 +914,43 @@
                         grid.innerHTML = '';
                     }
 
-                    // Add new ads to the existing adsData array
+                    // Initialize adsData if needed
                     if (!adsData) adsData = [];
-                    adsData.push(...data.newAds);
 
-                    // Redisplay all ads (including new ones)
-                    displayAds(adsData);
-                    updateStats(adsData);
+                    // Create a map of existing ads for duplicate checking
+                    const existingAdsMap = new Map();
+                    adsData.forEach(ad => {
+                        // Create unique key based on advertiser, headline, and timestamp
+                        const key = `${ad.advertiser || ad.sponsor || ''}_${ad.headline || ad.heading || ''}_${ad.timestamp || ''}`;
+                        existingAdsMap.set(key, ad);
+                    });
 
-                    console.log(`🆕 ${data.newAds.length} new ads found!`);
+                    // Filter out duplicates before adding
+                    const uniqueNewAds = data.newAds.filter(newAd => {
+                        const key = `${newAd.advertiser || newAd.sponsor || ''}_${newAd.headline || newAd.heading || ''}_${newAd.timestamp || ''}`;
+
+                        // Also check by ID if available
+                        const hasId = adsData.some(existingAd =>
+                            existingAd.id && newAd.id && existingAd.id === newAd.id
+                        );
+
+                        return !existingAdsMap.has(key) && !hasId;
+                    });
+
+                    if (uniqueNewAds.length > 0) {
+                        console.log(`Adding ${uniqueNewAds.length} unique new ads (filtered ${data.newAds.length - uniqueNewAds.length} duplicates)`);
+
+                        // Add only unique new ads
+                        adsData.push(...uniqueNewAds);
+
+                        // Redisplay all ads (including new ones)
+                        displayAds(adsData);
+                        updateStats(adsData);
+
+                        console.log(`🆕 ${uniqueNewAds.length} new unique ads added!`);
+                    } else {
+                        console.log('All received ads were duplicates, skipping update');
+                    }
                 }
 
                 // Update total count if provided
@@ -930,7 +958,7 @@
                     document.getElementById('totalAds').textContent = data.totalAds;
                 }
             } else if (data.type === 'ads_update') {
-                // Legacy format support
+                // Legacy format support with duplicate prevention
                 console.log('📡 Real-time update received: ads_update', data);
 
                 if (data.ads && data.ads.length > 0) {
@@ -940,13 +968,36 @@
                         grid.innerHTML = '';
                     }
 
-                    // Add all ads without filtering
+                    // Initialize adsData if needed
                     if (!adsData) adsData = [];
-                    adsData.push(...data.ads);
 
-                    // Redisplay all ads
-                    displayAds(adsData);
-                    updateStats(adsData);
+                    // Create a map of existing ads for duplicate checking
+                    const existingAdsMap = new Map();
+                    adsData.forEach(ad => {
+                        const key = `${ad.advertiser || ''}_${ad.headline || ''}_${ad.timestamp || ''}`;
+                        existingAdsMap.set(key, ad);
+                    });
+
+                    // Filter out duplicates
+                    const uniqueAds = data.ads.filter(newAd => {
+                        const key = `${newAd.advertiser || ''}_${newAd.headline || ''}_${newAd.timestamp || ''}`;
+
+                        // Also check by ID
+                        const hasId = adsData.some(existingAd =>
+                            existingAd.id && newAd.id && existingAd.id === newAd.id
+                        );
+
+                        return !existingAdsMap.has(key) && !hasId;
+                    });
+
+                    if (uniqueAds.length > 0) {
+                        console.log(`Adding ${uniqueAds.length} unique ads from ads_update`);
+                        adsData.push(...uniqueAds);
+
+                        // Redisplay all ads
+                        displayAds(adsData);
+                        updateStats(adsData);
+                    }
                 }
             } else if (data.type === 'status_update') {
                 // Handle status updates
