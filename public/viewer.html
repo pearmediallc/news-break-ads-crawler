@@ -373,7 +373,7 @@
                         <option value="1440">Last 24 hours</option>
                     </select>
                 </div>
-                <button class="btn btn-success" onclick="loadSession(document.getElementById('sessionSelector').value)">
+                <button class="btn btn-success" onclick="refreshCurrentView()">
                     🔄 Refresh
                 </button>
             </div>
@@ -512,12 +512,13 @@
             ads.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
             const adsHtml = ads.map((ad, index) => {
-                const safeAdvertiser = escapeHtml(ad.advertiser || 'Unknown');
-                const safeHeadline = escapeHtml(ad.headline || ad.heading || '');
-                const safeBody = escapeHtml(ad.body || ad.description || '');
-                const safeLink = ad.link || ad.linkUrl || ad.url || '';
+                // Normalize field names to handle different data formats
+                const safeAdvertiser = escapeHtml(ad.advertiser || ad.sponsor || ad.ad_network || 'Unknown');
+                const safeHeadline = escapeHtml(ad.headline || ad.heading || ad.title || '');
+                const safeBody = escapeHtml(ad.body || ad.description || ad.text || '');
+                const safeLink = ad.link || ad.linkUrl || ad.url || ad.link_url || '';
                 // Don't encode image URLs - they're already properly formatted
-                const safeImage = ad.image || ad.imageUrl || ad.img || '';
+                const safeImage = ad.image || ad.imageUrl || ad.img || ad.image_url || '';
 
                 // Check if this is a new ad
                 const adId = `${ad.advertiser}_${ad.headline}_${ad.timestamp}`;
@@ -538,7 +539,7 @@
                         <div style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; ${safeLink && safeImage ? 'justify-content: space-between' : ''};">
                             ${safeLink ? `<a href="${safeLink}" target="_blank" class="ad-link">🔗 Visit Ad</a>` : ''}
                             ${safeImage ?
-                                `<a onclick="downloadImage('${safeImage.replace(/'/g, "\\'")}',' ${safeHeadline.replace(/'/g, "\\'")}')" class="ad-link" style="cursor: pointer; ${!safeLink ? 'margin-left: auto;' : ''}">📥 Download Image</a>` : ''}
+                                `<a onclick="downloadImage('${safeImage.replace(/'/g, "\\'").replace(/"/g, "&quot;")}', '${safeHeadline.replace(/'/g, "\\'").replace(/"/g, "&quot;")}')" class="ad-link" style="cursor: pointer; ${!safeLink ? 'margin-left: auto;' : ''}">📥 Download Image</a>` : ''}
                         </div>
                         <div style="font-size: 11px; color: #888; margin-top: 8px;">
                             ${new Date(ad.timestamp).toLocaleString()} ${isNew ? '<span style="color: #10b981; font-weight: bold;">NEW</span>' : ''}
@@ -587,6 +588,7 @@
                 }
 
                 const sessions = await response.json();
+                console.log('Sessions loaded from API:', sessions);
 
                 const selector = document.getElementById('sessionSelector');
                 if (!selector) {
@@ -605,6 +607,8 @@
                         if (session.file && session.file.includes('.json')) {
                             const option = document.createElement('option');
                             option.value = session.file;
+
+                            console.log(`Adding session to dropdown: ${session.file} with ${session.totalAds} ads`);
 
                             // Parse date safely
                             let dateStr = 'Unknown date';
@@ -641,119 +645,129 @@
             adsData = [];
             seenAdIds.clear();
 
-            if (!sessionFile || sessionFile === '') {
-                // Current session - try to load from current_session.json first
-                console.log('Loading current session');
-                document.getElementById('currentSessionInfo').textContent = '(Current)';
+            try {
+                if (!sessionFile || sessionFile === '') {
+                    // Load current session via API
+                    console.log('Loading current session from API');
+                    const response = await fetch('/api/ads');
 
-                try {
-                    // First try to load current session file
-                    const currentResponse = await fetch('/data/current_session.json');
-                    if (currentResponse.ok) {
-                        const currentData = await currentResponse.json();
-                        console.log('Current session data:', currentData);
-
-                        if (currentData.sessionFile) {
-                            // Load the referenced session file
-                            const sessionResponse = await fetch(`/data/sessions/${currentData.sessionFile}`);
-                            if (sessionResponse.ok) {
-                                const sessionData = await sessionResponse.json();
-                                adsData = sessionData.ads || [];
-                                console.log(`Loaded ${adsData.length} ads from current session`);
-                                displayAds(adsData);
-                                updateStats(adsData);
-                                loading.style.display = 'none';
-
-                                // Update the session info display
-                                document.getElementById('currentSessionInfo').textContent = `(${currentData.sessionFile})`;
-                                return;
-                            } else {
-                                console.error('Session file not found:', currentData.sessionFile);
-                            }
-                        }
-                    }
-
-                    // If that fails, check for active extraction
-                    const activeResponse = await fetch('/api/extract/active');
-                    if (activeResponse.ok) {
-                        const activeData = await activeResponse.json();
-                        if (activeData.success && activeData.activeExtractions && activeData.activeExtractions.length > 0) {
-                            // There's an active extraction - show live indicator
-                            const indicator = document.getElementById('realtimeIndicator');
-                            if (indicator) {
-                                indicator.style.display = 'inline-block';
-                            }
-                            console.log('Active extraction detected - waiting for real-time updates');
-
-                            loading.style.display = 'none';
-                            grid.innerHTML = `
-                                <div class="no-ads">
-                                    <h3>Live Extraction Active</h3>
-                                    <p>Waiting for new ads from the active extraction...</p>
-                                    <div class="spinner"></div>
-                                </div>
-                            `;
-                            updateStats([]);
-                            return;
-                        }
-                    }
-
-                    // Finally try API
-                    await refreshAds();
-                } catch (error) {
-                    console.error('Error loading current session:', error);
-                    loading.style.display = 'none';
-                    grid.innerHTML = `
-                        <div class="no-ads">
-                            <h3>No ads found</h3>
-                            <p>Start an extraction to see ads here.</p>
-                        </div>
-                    `;
-                }
-            } else {
-                // Specific completed session - load all ads from file
-                console.log('Loading completed session:', sessionFile);
-                document.getElementById('currentSessionInfo').textContent = `(${sessionFile})`;
-
-                // Hide real-time indicator for completed sessions
-                const indicator = document.getElementById('realtimeIndicator');
-                if (indicator) {
-                    indicator.style.display = 'none';
-                }
-
-                try {
-                    const response = await fetch(`/data/sessions/${sessionFile}`);
                     if (response.ok) {
-                        const data = await response.json();
-                        adsData = data.ads || [];
+                        const ads = await response.json();
 
-                        // Mark all ads as seen to avoid animation
-                        adsData.forEach(ad => {
-                            const adId = `${ad.advertiser}_${ad.headline}_${ad.timestamp}`;
-                            seenAdIds.add(adId);
-                        });
+                        if (ads && ads.length > 0) {
+                            adsData = ads;
+                            console.log(`Loaded ${adsData.length} ads from current session`);
 
-                        displayAds(adsData);
-                        updateStats(adsData);
+                            // Mark all as seen to avoid animation on initial load
+                            adsData.forEach(ad => {
+                                const adId = `${ad.advertiser}_${ad.headline}_${ad.timestamp}`;
+                                seenAdIds.add(adId);
+                            });
+
+                            displayAds(adsData);
+                            updateStats(adsData);
+                            document.getElementById('currentSessionInfo').textContent = '(Current Session)';
+                        } else {
+                            // Check for active extraction
+                            const activeResponse = await fetch('/api/extract/active');
+                            if (activeResponse.ok) {
+                                const activeData = await activeResponse.json();
+                                if (activeData.success && activeData.activeExtractions && activeData.activeExtractions.length > 0) {
+                                    // There's an active extraction - show live indicator
+                                    const indicator = document.getElementById('realtimeIndicator');
+                                    if (indicator) {
+                                        indicator.style.display = 'inline-block';
+                                    }
+                                    console.log('Active extraction detected - waiting for real-time updates');
+
+                                    grid.innerHTML = `
+                                        <div class="no-ads">
+                                            <h3>Live Extraction Active</h3>
+                                            <p>Waiting for new ads from the active extraction...</p>
+                                            <div class="spinner"></div>
+                                        </div>
+                                    `;
+                                    updateStats([]);
+                                } else {
+                                    grid.innerHTML = `
+                                        <div class="no-ads">
+                                            <h3>No ads found</h3>
+                                            <p>Start an extraction to see ads here.</p>
+                                        </div>
+                                    `;
+                                }
+                            }
+                        }
                     } else {
-                        console.error('Session file not found:', sessionFile);
+                        console.error('Failed to load current session:', response.status);
                         grid.innerHTML = `
                             <div class="no-ads">
-                                <h3>Session Not Found</h3>
-                                <p>The selected session file could not be loaded.</p>
+                                <h3>No ads found</h3>
+                                <p>Start an extraction to see ads here.</p>
                             </div>
                         `;
                     }
-                } catch (error) {
-                    console.error('Failed to load session:', error);
-                    grid.innerHTML = `
-                        <div class="no-ads">
-                            <h3>Error Loading Session</h3>
-                            <p>Failed to load the selected session.</p>
-                        </div>
-                    `;
-                }
+                } else {
+                    // Load specific session via API
+                    console.log('Loading specific session:', sessionFile);
+                    document.getElementById('currentSessionInfo').textContent = `(${sessionFile})`;
 
+                    // Hide real-time indicator for completed sessions
+                    const indicator = document.getElementById('realtimeIndicator');
+                    if (indicator) {
+                        indicator.style.display = 'none';
+                    }
+
+                    const response = await fetch(`/api/ads?session=${sessionFile}`);
+
+                    if (response.ok) {
+                        const ads = await response.json();
+                        console.log('Raw API response for session:', sessionFile, ads);
+
+                        if (ads && ads.length > 0) {
+                            adsData = ads;
+                            console.log(`Loaded ${adsData.length} ads from session ${sessionFile}`);
+                            console.log('First ad sample:', adsData[0]);
+
+                            // Mark all ads as seen to avoid animation
+                            adsData.forEach(ad => {
+                                const headline = ad.headline || ad.heading || '';
+                                const advertiser = ad.advertiser || ad.sponsor || 'Unknown';
+                                const adId = `${advertiser}_${headline}_${ad.timestamp}`;
+                                seenAdIds.add(adId);
+                            });
+
+                            displayAds(adsData);
+                            updateStats(adsData);
+                        } else {
+                            console.log('No ads found in session:', sessionFile);
+                            console.log('Empty response received:', ads);
+                            grid.innerHTML = `
+                                <div class="no-ads">
+                                    <h3>No ads in this session</h3>
+                                    <p>This session contains no ads.</p>
+                                </div>
+                            `;
+                        }
+                    } else {
+                        console.error('Failed to load session:', response.status);
+                        grid.innerHTML = `
+                            <div class="no-ads">
+                                <h3>Session Not Found</h3>
+                                <p>The selected session could not be loaded.</p>
+                            </div>
+                        `;
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading session:', error);
+                grid.innerHTML = `
+                    <div class="no-ads">
+                        <h3>Error Loading Session</h3>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            } finally {
                 loading.style.display = 'none';
             }
         }
@@ -775,6 +789,15 @@
             });
 
             displayAds(filteredAds);
+        }
+
+        // Refresh current view
+        async function refreshCurrentView() {
+            const selector = document.getElementById('sessionSelector');
+            const currentSession = selector ? selector.value : '';
+
+            console.log('Refreshing view for session:', currentSession || 'current');
+            await loadSession(currentSession);
         }
 
         // Refresh ads
