@@ -633,7 +633,13 @@
 
         // Load session
         async function loadSession(sessionFile) {
-            currentSessionFile = sessionFile;
+            // Only set currentSessionFile if it's a specific session, not current
+            if (sessionFile && sessionFile !== '') {
+                currentSessionFile = sessionFile;
+            } else {
+                currentSessionFile = ''; // Empty means current/live session
+            }
+
             const loading = document.getElementById('adsLoading');
             const grid = document.getElementById('adsGrid');
 
@@ -869,10 +875,30 @@
             console.log('📨 Real-time update:', data);
             console.log('Current session file:', currentSessionFile);
 
-            // Only process updates if viewing current session (empty or null)
-            if (currentSessionFile && currentSessionFile !== '') {
-                console.log('Not processing update - viewing specific session');
-                return;
+            // Check if we're viewing current session or a live session
+            const selector = document.getElementById('sessionSelector');
+            const isCurrentSession = !selector || selector.value === '' || selector.value === null;
+
+            // If not viewing current session, check if it's the active extraction session
+            if (!isCurrentSession) {
+                // Check if the update is for the session we're currently viewing
+                const updateSessionId = data.sessionId || data.extractionId;
+                if (updateSessionId && currentSessionFile) {
+                    // Extract session ID from filename (e.g., worker_2025-09-27T13-40-52-387Z.json -> 2025-09-27T13-40-52-387Z)
+                    const currentSessionId = currentSessionFile.replace('worker_', '').replace('.json', '');
+
+                    // If the update is for the session we're viewing, process it
+                    if (updateSessionId.includes(currentSessionId) || currentSessionId.includes(updateSessionId)) {
+                        console.log('Processing update for current viewing session');
+                        // Continue processing the update
+                    } else {
+                        console.log('Not processing update - different session');
+                        return;
+                    }
+                } else {
+                    console.log('Not processing update - viewing completed session');
+                    return;
+                }
             }
 
             if (data.type === 'new_ads') {
@@ -962,6 +988,32 @@
 
             // Connect to real-time updates
             connectToRealTimeUpdates();
+
+            // Check for active extractions first
+            try {
+                const activeResponse = await fetch('/api/extract/active');
+                if (activeResponse.ok) {
+                    const activeData = await activeResponse.json();
+                    if (activeData.success && activeData.activeExtractions && activeData.activeExtractions.length > 0) {
+                        const activeExtraction = activeData.activeExtractions[0];
+                        console.log('Active extraction detected:', activeExtraction);
+
+                        // Set the current session file to match the active extraction
+                        if (activeExtraction.sessionFile) {
+                            currentSessionFile = ''; // Keep empty to receive updates
+                            console.log('Setting up for live updates from active extraction');
+                        }
+
+                        // Show live indicator
+                        const indicator = document.getElementById('realtimeIndicator');
+                        if (indicator) {
+                            indicator.style.display = 'inline-block';
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error checking active extractions:', error);
+            }
 
             // Always load current session to get live updates
             await loadSession('');
