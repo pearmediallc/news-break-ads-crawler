@@ -757,7 +757,12 @@ app.get('/api/extract/status', async (req, res) => {
 // Start multi-thread extraction - Admin only
 app.post('/api/extract/multi-thread/start', requireAuth, requireAdmin, async (req, res) => {
     try {
-        const { maxWorkers = 3, deviceMode = 'desktop' } = req.body;
+        const {
+            maxWorkers = 3,
+            deviceMode = 'desktop',
+            sameUrl = false,
+            url = 'https://www.newsbreak.com/new-york-ny'
+        } = req.body;
 
         if (multiThreadExtractor && multiThreadExtractor.getStatus().isRunning) {
             return res.status(400).json({ error: 'Multi-thread extraction already running' });
@@ -768,19 +773,27 @@ app.post('/api/extract/multi-thread/start', requireAuth, requireAdmin, async (re
             return res.status(400).json({ error: 'maxWorkers must be between 1 and 10' });
         }
 
-        console.log(`🚀 Starting multi-thread extraction with ${maxWorkers} workers...`);
+        if (sameUrl) {
+            console.log(`🚀 Starting multi-thread extraction with ${maxWorkers} workers on SAME URL: ${url}`);
+        } else {
+            console.log(`🚀 Starting multi-thread extraction with ${maxWorkers} workers on DIFFERENT URLs`);
+        }
 
         multiThreadExtractor = new MultiThreadExtractor({
             maxWorkers,
             deviceMode,
-            restartOnFailure: true
+            restartOnFailure: true,
+            sameUrl: sameUrl,
+            baseUrl: sameUrl ? url : null
         });
 
         await multiThreadExtractor.start();
 
         res.json({
             success: true,
-            message: `Multi-thread extraction started with ${maxWorkers} workers`,
+            message: sameUrl
+                ? `Multi-thread extraction started with ${maxWorkers} workers on ${url}`
+                : `Multi-thread extraction started with ${maxWorkers} workers on different cities`,
             status: multiThreadExtractor.getStatus()
         });
 

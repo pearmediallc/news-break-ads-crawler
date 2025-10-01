@@ -27,6 +27,8 @@ class MultiThreadExtractor {
       extractionMode: 'unlimited',
       restartOnFailure: true,
       workerRestartDelay: 5000, // 5 seconds
+      sameUrl: config.sameUrl || false, // NEW: All workers on same URL
+      baseUrl: config.baseUrl || null, // NEW: URL to use if sameUrl=true
       ...config
     };
   }
@@ -34,6 +36,12 @@ class MultiThreadExtractor {
   async initialize() {
     logger.info('🚀 Initializing Multi-Thread Extractor');
     logger.info(`📊 Configuration: ${this.maxWorkers} parallel workers`);
+
+    if (this.config.sameUrl) {
+      logger.info(`🔗 Mode: SAME URL - All workers on ${this.config.baseUrl || 'default URL'}`);
+    } else {
+      logger.info(`🔗 Mode: DIFFERENT URLs - Workers on different cities`);
+    }
 
     this.sharedSessionId = `multi_${Date.now()}`;
     this.startTime = Date.now();
@@ -43,10 +51,17 @@ class MultiThreadExtractor {
 
   async startWorker(workerId) {
     try {
-      // Get unique URL for this worker
-      const url = this.urlRotation.getNextUrl();
-
-      logger.info(`🔷 Starting Worker #${workerId} on ${url}`);
+      // Get URL for this worker
+      let url;
+      if (this.config.sameUrl && this.config.baseUrl) {
+        // All workers use the same URL
+        url = this.config.baseUrl;
+        logger.info(`🔷 Starting Worker #${workerId} on SAME URL: ${url}`);
+      } else {
+        // Each worker gets a unique URL
+        url = this.urlRotation.getNextUrl();
+        logger.info(`🔷 Starting Worker #${workerId} on ${url}`);
+      }
 
       const worker = new Worker(path.join(__dirname, 'extractionWorker.js'), {
         workerData: {
