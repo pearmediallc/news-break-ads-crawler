@@ -6,6 +6,7 @@ const cookieParser = require('cookie-parser');
 const session = require('express-session');
 const queryRoutes = require('./src/api/queryRoutes');
 const BackgroundExtractionService = require('./src/services/backgroundExtractor');
+const MultiThreadExtractor = require('./src/services/multiThreadExtractor');
 const { authenticateUser, generateToken, requireAuth, requireAdmin } = require('./src/auth/authMiddleware');
 const userManager = require('./src/auth/userManager');
 const app = express();
@@ -15,6 +16,9 @@ const activeExtractions = new Map();
 
 // Initialize background extraction service with update callback
 const backgroundExtractor = new BackgroundExtractionService();
+
+// Initialize multi-thread extractor (optional, started via API)
+let multiThreadExtractor = null;
 
 // Set up callback to broadcast updates to SSE clients
 backgroundExtractor.onUpdate = (data) => {
@@ -746,6 +750,122 @@ app.get('/api/extract/status', async (req, res) => {
     }
 });
 
+// ============================================================================
+// MULTI-THREAD EXTRACTION ENDPOINTS
+// ============================================================================
+
+// Start multi-thread extraction - Admin only
+app.post('/api/extract/multi-thread/start', requireAuth, requireAdmin, async (req, res) => {
+    try {
+        const { maxWorkers = 3, deviceMode = 'desktop' } = req.body;
+
+        if (multiThreadExtractor && multiThreadExtractor.getStatus().isRunning) {
+            return res.status(400).json({ error: 'Multi-thread extraction already running' });
+        }
+
+        // Validate maxWorkers
+        if (maxWorkers < 1 || maxWorkers > 10) {
+            return res.status(400).json({ error: 'maxWorkers must be between 1 and 10' });
+        }
+
+        console.log(`🚀 Starting multi-thread extraction with ${maxWorkers} workers...`);
+
+        multiThreadExtractor = new MultiThreadExtractor({
+            maxWorkers,
+            deviceMode,
+            restartOnFailure: true
+        });
+
+        await multiThreadExtractor.start();
+
+        res.json({
+            success: true,
+            message: `Multi-thread extraction started with ${maxWorkers} workers`,
+            status: multiThreadExtractor.getStatus()
+        });
+
+    } catch (error) {
+        console.error('Failed to start multi-thread extraction:', error);
+        res.status(500).json({ error: 'Failed to start multi-thread extraction', details: error.message });
+    }
+});
+
+// Stop multi-thread extraction - Admin only
+app.post('/api/extract/multi-thread/stop', requireAuth, requireAdmin, async (req, res) => {
+    try {
+        if (!multiThreadExtractor) {
+            return res.status(400).json({ error: 'No multi-thread extraction running' });
+        }
+
+        console.log('🛑 Stopping multi-thread extraction...');
+        await multiThreadExtractor.stop();
+
+        res.json({
+            success: true,
+            message: 'Multi-thread extraction stopped',
+            finalStats: multiThreadExtractor.getStatus()
+        });
+
+        multiThreadExtractor = null;
+
+    } catch (error) {
+        console.error('Failed to stop multi-thread extraction:', error);
+        res.status(500).json({ error: 'Failed to stop multi-thread extraction', details: error.message });
+    }
+});
+
+// Get multi-thread extraction status
+app.get('/api/extract/multi-thread/status', async (req, res) => {
+    try {
+        if (!multiThreadExtractor) {
+            return res.json({
+                success: true,
+                isRunning: false,
+                message: 'No multi-thread extraction running'
+            });
+        }
+
+        const status = multiThreadExtractor.getStatus();
+
+        res.json({
+            success: true,
+            ...status
+        });
+
+    } catch (error) {
+        console.error('Failed to get multi-thread status:', error);
+        res.status(500).json({ error: 'Failed to get multi-thread status', details: error.message });
+    }
+});
+
+// Get logs from specific worker or all workers
+app.get('/api/extract/multi-thread/logs', async (req, res) => {
+    try {
+        if (!multiThreadExtractor) {
+            return res.status(404).json({ error: 'No multi-thread extraction running' });
+        }
+
+        const { workerId, limit = 100 } = req.query;
+
+        let logs;
+        if (workerId) {
+            logs = multiThreadExtractor.getWorkerLogs(parseInt(workerId), parseInt(limit));
+        } else {
+            logs = multiThreadExtractor.getAllLogs(parseInt(limit));
+        }
+
+        res.json({
+            success: true,
+            logs,
+            count: logs.length
+        });
+
+    } catch (error) {
+        console.error('Failed to get multi-thread logs:', error);
+        res.status(500).json({ error: 'Failed to get logs', details: error.message });
+    }
+});
+
 // Error handling
 app.use((err, req, res, next) => {
     console.error(err.stack);
@@ -860,13 +980,33 @@ function broadcastUpdate(data) {
           }
 
           if (message.type === 'log') {
-            broadcastUpdate({
-              type: 'log',
-              extractionId: extractionId,
-              message: message.data.message,
-              level: message.data.level || 'info',
-              timestamp: new Date().toISOString()
-            });
+            const level = message.data.level || 'info';
+            const msg = message.data.message || '';
+
+            // Only broadcast important logs to reduce SSE spam
+            const isImportant =
+              level === 'warn' ||
+              level === 'error' ||
+              msg.includes('🔍 Scan #') ||
+              msg.includes('new ads') ||
+              msg.includes('✅') ||
+              msg.includes('❌') ||
+              msg.includes('🔄') ||
+              msg.includes('Total:') ||
+              msg.includes('rotating') ||
+              msg.includes('Refreshed') ||
+              msg.includes('completed') ||
+              msg.includes('started');
+
+            if (isImportant) {
+              broadcastUpdate({
+                type: 'log',
+                extractionId: extractionId,
+                message: message.data.message,
+                level: level,
+                timestamp: new Date().toISOString()
+              });
+            }
           }
 
           return result;

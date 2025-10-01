@@ -2,6 +2,7 @@ const { parentPort, workerData } = require('worker_threads');
 const puppeteer = require('puppeteer');
 const fs = require('fs-extra');
 const path = require('path');
+const { URLRotationManager } = require('../config/urlRotation');
 
 // Worker logger that sends messages to parent
 const logger = {
@@ -31,6 +32,17 @@ class WorkerAdExtractor {
     this.totalDbAds = 0; // Track total ads saved to database
     this.totalAdsExtracted = 0; // Track total ads extracted (for stats)
     this.maxRecentAds = 10; // Only keep last 10 ads for UI display
+
+    // URL rotation for unlimited mode
+    this.urlRotation = new URLRotationManager(workerData.url);
+    this.currentUrl = workerData.url;
+    this.consecutiveNoNewAds = 0;
+    this.lastUrlRotation = Date.now();
+    this.adsBeforeRotation = 0;
+
+    // Browser health monitoring (every 2 hours)
+    this.lastBrowserHealthCheck = Date.now();
+    this.browserHealthCheckInterval = 2 * 60 * 60 * 1000; // 2 hours
   }
 
   async initialize() {
@@ -677,8 +689,7 @@ class WorkerAdExtractor {
               }
             }
 
-            // STAY ON SAME URL: Just continue with page refresh and scrolling
-            // No URL navigation - keep extraction on the original URL only
+            // Continue extraction - URL rotation happens automatically
           }
         } else {
           // Only log occasionally to reduce spam
@@ -701,10 +712,8 @@ class WorkerAdExtractor {
           if (ads.length <= 1) {
             logger.info(`💡 Try: 1) Different URL, 2) Clear cookies, 3) Check if ads are blocked`);
           } else {
-            logger.info(`💡 Content may be exhausted - rotating to new location soon...`);
+            // No longer needed - rotation happens automatically at 50 attempts
           }
-
-          // STAY ON SAME URL: Only use page refresh and scrolling strategies
         }
       }
 
@@ -1249,6 +1258,96 @@ class WorkerAdExtractor {
     }
   }
 
+  async performBrowserHealthCheck() {
+    try {
+      logger.info(`🏥 Performing browser health check (${Math.floor((Date.now() - this.startTime) / (60 * 60 * 1000))}h runtime)...`);
+
+      // Check if browser is responsive
+      if (!this.browser || !this.browser.isConnected()) {
+        logger.warn(`❌ Browser not connected - attempting restart...`);
+        await this.handleBrowserDisconnection();
+        return;
+      }
+
+      // Check if page is responsive
+      try {
+        const title = await this.page.evaluate(() => document.title);
+        const url = await this.page.url();
+        logger.info(`✅ Browser healthy - Current page: "${title}" at ${url}`);
+      } catch (pageError) {
+        logger.warn(`⚠️ Page not responsive - reloading...`);
+        await this.page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+        logger.info(`✅ Page reloaded successfully`);
+      }
+
+      // Memory check
+      const memUsage = process.memoryUsage();
+      const heapUsedMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+      const totalMB = Math.round(memUsage.rss / 1024 / 1024);
+
+      logger.info(`💾 Memory: ${heapUsedMB}MB heap, ${totalMB}MB total`);
+
+      // If memory is too high, restart browser
+      if (totalMB > 500) {
+        logger.warn(`⚠️ High memory usage detected (${totalMB}MB) - restarting browser...`);
+        await this.handleBrowserDisconnection();
+      }
+
+      this.lastBrowserHealthCheck = Date.now();
+
+    } catch (error) {
+      logger.error(`❌ Browser health check failed: ${error.message}`);
+    }
+  }
+
+  async rotateToNewUrl() {
+    try {
+      const oldUrl = this.currentUrl;
+      const newUrl = this.urlRotation.getNextUrl();
+
+      logger.info(`\n🔄 ROTATING URL - No new ads for ${this.consecutiveNoNewAds} extractions`);
+      logger.info(`📍 Old: ${oldUrl}`);
+      logger.info(`📍 New: ${newUrl}`);
+      logger.info(`📊 Stats: ${this.totalDbAds} total ads extracted before rotation\n`);
+
+      // Navigate to new URL
+      try {
+        await this.page.goto(newUrl, {
+          waitUntil: 'domcontentloaded',
+          timeout: 60000
+        });
+
+        // Wait for page to load
+        await new Promise(resolve => setTimeout(resolve, 5000));
+
+        // Update current URL
+        this.currentUrl = newUrl;
+        this.consecutiveNoNewAds = 0;
+        this.lastUrlRotation = Date.now();
+        this.adsBeforeRotation = this.totalDbAds;
+
+        logger.info(`✅ Successfully rotated to new URL`);
+
+        // Send update to parent
+        parentPort.postMessage({
+          type: 'log',
+          data: {
+            message: `🔄 Rotated to new location: ${newUrl}`,
+            level: 'info'
+          }
+        });
+
+      } catch (navError) {
+        logger.error(`❌ Failed to navigate to new URL: ${navError.message}`);
+        logger.info(`📍 Staying on current URL: ${oldUrl}`);
+        this.consecutiveNoNewAds = Math.max(0, this.consecutiveNoNewAds - 25); // Reduce counter to try again later
+      }
+
+    } catch (error) {
+      logger.error(`❌ URL rotation failed: ${error.message}`);
+    }
+  }
+
   async run() {
     this.isRunning = true;
 
@@ -1369,6 +1468,16 @@ class WorkerAdExtractor {
               // Continue anyway - might be a temporary issue
             }
           }
+        }
+
+        // Browser health check every 2 hours
+        if (workerData.extractionMode === 'unlimited' && Date.now() - this.lastBrowserHealthCheck >= this.browserHealthCheckInterval) {
+          await this.performBrowserHealthCheck();
+        }
+
+        // URL rotation for unlimited mode when stuck
+        if (workerData.extractionMode === 'unlimited' && this.consecutiveNoNewAds >= 50) {
+          await this.rotateToNewUrl();
         }
 
         // Update progress for timed extractions
