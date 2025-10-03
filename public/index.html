@@ -606,9 +606,19 @@
 
                     // Show success message
                     showAlert('info', `🔄 Reconnected to active extraction: ${activeExtraction.id}`);
+                } else {
+                    // No active extractions - clear any stale extraction IDs
+                    console.log('✅ No active extractions found, clearing stale tracking...');
+                    currentExtractionId = null;
+                    window.currentExtractionId = null;
+                    stopStatusMonitoring();
                 }
             } catch (error) {
                 console.error('Failed to check active extractions:', error);
+                // On error, also clear stale IDs to prevent continuous 404s
+                currentExtractionId = null;
+                window.currentExtractionId = null;
+                stopStatusMonitoring();
             }
         }
 
@@ -1039,11 +1049,24 @@
                     method: 'POST'
                 });
 
+                // Handle 404 - extraction not found (already stopped)
+                if (response.status === 404) {
+                    showAlert('warning', 'Extraction not found - may have already stopped');
+                    currentExtractionId = null;
+                    window.currentExtractionId = null;
+                    stopStatusMonitoring();
+                    showStatus('idle', 'No active extraction');
+                    document.getElementById('stopBtn').disabled = true;
+                    return;
+                }
+
                 const data = await response.json();
 
                 if (response.ok) {
                     showStatus('stopped', 'Extraction stopped');
                     stopStatusMonitoring();
+                    currentExtractionId = null;
+                    window.currentExtractionId = null;
 
                     // Final refresh to get all ads
                     await loadAds();
@@ -1074,6 +1097,18 @@
 
                 try {
                     const response = await fetch(`/api/extract/status/${currentExtractionId}`);
+
+                    // If extraction not found (404), clear it and stop polling
+                    if (response.status === 404) {
+                        console.log('Extraction not found (404), clearing tracking...');
+                        currentExtractionId = null;
+                        window.currentExtractionId = null;
+                        stopStatusMonitoring();
+                        showStatus('idle', 'No active extraction');
+                        document.getElementById('stopBtn').disabled = true;
+                        return;
+                    }
+
                     const data = await response.json();
 
                     if (response.ok) {
