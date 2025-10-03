@@ -176,14 +176,14 @@ class DatabaseSyncService {
         await this.initialize();
       }
 
-      // Update session with new ads count
+      // Sync new ads first (this will handle duplicates)
+      // The database trigger will automatically update sessions.total_ads
+      await this.syncAds(ads, sessionId);
+
+      // Just update the session timestamp (total_ads is auto-updated by trigger)
       await this.db.updateSession(sessionId, {
-        total_ads: ads.length,
         updated_at: new Date().toISOString()
       });
-
-      // Sync new ads (this will handle duplicates)
-      await this.syncAds(ads, sessionId);
 
       logger.debug(`Real-time sync completed for session ${sessionId}`);
     } catch (error) {
