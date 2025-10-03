@@ -391,32 +391,29 @@ app.get('/api/extract/status/:id', async (req, res) => {
 app.get('/api/ads', async (req, res) => {
     try {
         const { session, refresh, timeframe } = req.query;
+        let sessionId = null;
 
         if (session) {
-            // Load specific session
+            // Load specific session - extract sessionId from filename
             const sessionFile = path.join(__dirname, 'data', 'sessions', session);
             if (await fs.exists(sessionFile)) {
                 const sessionData = await fs.readJson(sessionFile);
-                res.json(sessionData.ads || []);
+                sessionId = sessionData.sessionId;
             } else {
-                res.status(404).json({ error: 'Session not found' });
+                return res.status(404).json({ error: 'Session not found' });
             }
         } else {
             // Load current session or most recent session
             const currentSessionFile = path.join(__dirname, 'data', 'current_session.json');
-            let sessionFile = null;
 
             // First try to load from current_session.json
             if (await fs.exists(currentSessionFile)) {
                 const currentSession = await fs.readJson(currentSessionFile);
-                const potentialFile = path.join(__dirname, 'data', 'sessions', currentSession.sessionFile);
-                if (await fs.exists(potentialFile)) {
-                    sessionFile = potentialFile;
-                }
+                sessionId = currentSession.sessionId;
             }
 
-            // If current session file doesn't exist, try to find the most recent session
-            if (!sessionFile) {
+            // If current session doesn't exist, find the most recent session
+            if (!sessionId) {
                 const sessionsDir = path.join(__dirname, 'data', 'sessions');
                 const sessionFiles = await fs.readdir(sessionsDir);
                 const workerSessions = sessionFiles
@@ -424,32 +421,32 @@ app.get('/api/ads', async (req, res) => {
                     .sort().reverse(); // Get most recent first
 
                 if (workerSessions.length > 0) {
-                    // Find the first session with ads
-                    for (const file of workerSessions) {
-                        const testFile = path.join(sessionsDir, file);
-                        try {
-                            const testData = await fs.readJson(testFile);
-                            if (testData.ads && testData.ads.length > 0) {
-                                sessionFile = testFile;
-                                break;
-                            }
-                        } catch (e) {
-                            // Skip invalid files
-                        }
+                    const recentFile = path.join(sessionsDir, workerSessions[0]);
+                    try {
+                        const sessionData = await fs.readJson(recentFile);
+                        sessionId = sessionData.sessionId;
+                    } catch (e) {
+                        // Skip invalid files
                     }
                 }
             }
+        }
 
-            if (sessionFile) {
-                const sessionData = await fs.readJson(sessionFile);
+        // Load ads from DATABASE (not from session JSON files)
+        if (sessionId) {
+            try {
+                const DatabaseSyncService = require('./src/database/syncService');
+                const dbSync = new DatabaseSyncService();
+                await dbSync.initialize();
 
-                let ads = sessionData.ads || [];
+                // Get all ads for this session from database
+                let ads = await dbSync.db.getSessionAds(sessionId);
 
                 // Apply time filtering
                 if (refresh === 'true') {
                     const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
                     ads = ads.filter(ad => {
-                        const adTime = new Date(ad.timestamp).getTime();
+                        const adTime = new Date(ad.created_at || ad.timestamp).getTime();
                         return adTime > fiveMinutesAgo;
                     });
                 } else if (timeframe) {
@@ -457,16 +454,21 @@ app.get('/api/ads', async (req, res) => {
                     if (!isNaN(timeframeMinutes)) {
                         const timeframeAgo = Date.now() - (timeframeMinutes * 60 * 1000);
                         ads = ads.filter(ad => {
-                            const adTime = new Date(ad.timestamp).getTime();
+                            const adTime = new Date(ad.created_at || ad.timestamp).getTime();
                             return adTime > timeframeAgo;
                         });
                     }
                 }
 
-                res.json(ads);
-            } else {
+                await dbSync.close();
+                res.json(ads || []);
+            } catch (dbError) {
+                console.error('Database error:', dbError);
+                // Fallback to empty array if database fails
                 res.json([]);
             }
+        } else {
+            res.json([]);
         }
     } catch (error) {
         console.error('Failed to load ads:', error);

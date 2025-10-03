@@ -1065,7 +1065,7 @@
 
             // Immediately refresh session display when extraction starts
             setTimeout(() => {
-                loadCurrentSession();
+                loadAds(''); // Load current session
                 loadStats();
             }, 1000); // Give worker a moment to create session
 
@@ -1081,7 +1081,7 @@
 
                         // Refresh current session display during extraction
                         if (data.status === 'running' && data.sessionFile) {
-                            loadCurrentSession();
+                            loadAds(''); // Load current session
                         }
 
                         if (data.status !== 'running') {
@@ -2228,14 +2228,14 @@
                 const sessionSelector = document.getElementById('sessionSelector');
 
                 if (isRunning) {
-                    // When running, always load current session
-                    loadCurrentSession();
+                    // When running, always load current session (empty string = current)
+                    loadAds('');
                 } else if (sessionSelector && sessionSelector.value) {
                     // When not running, load selected session
                     loadAds(sessionSelector.value);
                 } else {
                     // Default to current session
-                    loadCurrentSession();
+                    loadAds('');
                 }
                 loadStats();
             };
