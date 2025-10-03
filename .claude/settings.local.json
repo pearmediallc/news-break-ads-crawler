@@ -28,7 +28,8 @@
       "Bash(tasklist)",
       "Bash(cat:*)",
       "Bash(tree:*)",
-      "Bash(where chrome)"
+      "Bash(where chrome)",
+      "Read(//c/Users/pearm/Downloads/**)"
     ],
     "deny": [],
     "ask": []
