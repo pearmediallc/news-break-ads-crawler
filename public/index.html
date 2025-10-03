@@ -552,7 +552,7 @@
             eventSource = new EventSource('/api/events');
 
             eventSource.onopen = function() {
-                console.log('✅ Real-time updates connected');
+                console.log('✅ SSE CONNECTION OPENED - Real-time updates connected');
                 showAlert('success', 'Real-time updates connected');
 
                 // Show real-time indicator
@@ -563,11 +563,13 @@
             };
 
             eventSource.onmessage = function(event) {
+                console.log('📡 SSE MESSAGE RECEIVED:', event.data);
                 try {
                     const data = JSON.parse(event.data);
+                    console.log('📦 Parsed SSE data:', data);
                     handleRealTimeUpdate(data);
                 } catch (error) {
-                    console.error('Failed to parse real-time update:', error);
+                    console.error('❌ Failed to parse SSE message:', error, 'Raw data:', event.data);
                 }
             };
 
@@ -788,8 +790,8 @@
 
                 case 'log':
                     // Log messages from extraction worker - display in UI
-                    console.log(`[${data.level.toUpperCase()}] ${data.message}`);
-                    addLogToUI(data.level, data.message);
+                    console.log(`📨 SSE LOG RECEIVED: [${data.level?.toUpperCase() || 'INFO'}] ${data.message}`);
+                    addLogToUI(data.level || 'info', data.message);
                     break;
             }
         }
@@ -802,8 +804,11 @@
             }
 
             // Clear placeholder message on first real log
-            if (logsContainer.children.length === 1 && logsContainer.textContent.includes('Waiting')) {
+            if (logsContainer.children.length === 1 &&
+                (logsContainer.textContent.includes('Waiting') ||
+                 logsContainer.textContent.includes('connecting to live logs'))) {
                 logsContainer.innerHTML = '';
+                console.log('🧹 Cleared placeholder message from logs container');
             }
 
             // Create log entry with timestamp
