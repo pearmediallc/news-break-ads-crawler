@@ -432,41 +432,87 @@ app.get('/api/ads', async (req, res) => {
             }
         }
 
-        // Load ads from DATABASE (not from session JSON files)
+        // Try to load ads from DATABASE first, fallback to JSON if empty
         if (sessionId) {
+            let ads = [];
+            let loadedFromDb = false;
+
+            // Try database first
             try {
                 const DatabaseSyncService = require('./src/database/syncService');
                 const dbSync = new DatabaseSyncService();
                 await dbSync.initialize();
 
                 // Get all ads for this session from database
-                let ads = await dbSync.db.getSessionAds(sessionId);
-
-                // Apply time filtering
-                if (refresh === 'true') {
-                    const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
-                    ads = ads.filter(ad => {
-                        const adTime = new Date(ad.created_at || ad.timestamp).getTime();
-                        return adTime > fiveMinutesAgo;
-                    });
-                } else if (timeframe) {
-                    const timeframeMinutes = parseInt(timeframe);
-                    if (!isNaN(timeframeMinutes)) {
-                        const timeframeAgo = Date.now() - (timeframeMinutes * 60 * 1000);
-                        ads = ads.filter(ad => {
-                            const adTime = new Date(ad.created_at || ad.timestamp).getTime();
-                            return adTime > timeframeAgo;
-                        });
-                    }
-                }
-
+                ads = await dbSync.db.getSessionAds(sessionId);
                 await dbSync.close();
-                res.json(ads || []);
+
+                if (ads && ads.length > 0) {
+                    loadedFromDb = true;
+                    console.log(`Loaded ${ads.length} ads from database for session ${sessionId}`);
+
+                    // Convert database column names to match UI expectations
+                    ads = ads.map(ad => ({
+                        id: ad.ad_id || ad.id,
+                        timestamp: ad.timestamp,
+                        containerId: ad.container_id || '',
+                        adType: ad.ad_type || '',
+                        advertiser: ad.ad_network || '',
+                        headline: ad.heading || '',
+                        body: ad.description || '',
+                        image: ad.image_url || '',
+                        link: ad.link_url || '',
+                        iframeSize: `${ad.width || 0}x${ad.height || 0}`,
+                        iframeSrc: ''
+                    }));
+                }
             } catch (dbError) {
                 console.error('Database error:', dbError);
-                // Fallback to empty array if database fails
-                res.json([]);
             }
+
+            // Fallback to JSON file if no ads in database
+            if (!loadedFromDb || ads.length === 0) {
+                console.log(`No ads in database, trying JSON file for session ${sessionId}...`);
+                try {
+                    // Find the session file
+                    const sessionsDir = path.join(__dirname, 'data', 'sessions');
+                    const sessionFiles = await fs.readdir(sessionsDir);
+
+                    // Look for matching session file
+                    const matchingFile = sessionFiles.find(f =>
+                        f.includes(sessionId.replace(/:/g, '-').replace(/\./g, '-'))
+                    );
+
+                    if (matchingFile) {
+                        const sessionFilePath = path.join(sessionsDir, matchingFile);
+                        const sessionData = await fs.readJson(sessionFilePath);
+                        ads = sessionData.ads || [];
+                        console.log(`Loaded ${ads.length} ads from JSON file ${matchingFile}`);
+                    }
+                } catch (fileError) {
+                    console.error('Failed to load from JSON:', fileError.message);
+                }
+            }
+
+            // Apply time filtering
+            if (refresh === 'true') {
+                const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
+                ads = ads.filter(ad => {
+                    const adTime = new Date(ad.created_at || ad.timestamp).getTime();
+                    return adTime > fiveMinutesAgo;
+                });
+            } else if (timeframe) {
+                const timeframeMinutes = parseInt(timeframe);
+                if (!isNaN(timeframeMinutes)) {
+                    const timeframeAgo = Date.now() - (timeframeMinutes * 60 * 1000);
+                    ads = ads.filter(ad => {
+                        const adTime = new Date(ad.created_at || ad.timestamp).getTime();
+                        return adTime > timeframeAgo;
+                    });
+                }
+            }
+
+            res.json(ads);
         } else {
             res.json([]);
         }
