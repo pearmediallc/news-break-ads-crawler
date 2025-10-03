@@ -1086,22 +1086,28 @@ function broadcastUpdate(data) {
             const level = message.data.level || 'info';
             const msg = message.data.message || '';
 
-            // Only broadcast important logs to reduce SSE spam
-            const isImportant =
+            // Broadcast most logs - filter out only very verbose debug logs
+            const shouldBroadcast =
               level === 'warn' ||
               level === 'error' ||
-              msg.includes('🔍 Scan #') ||
-              msg.includes('new ads') ||
+              level === 'info' ||
+              msg.includes('🔍') ||
               msg.includes('✅') ||
               msg.includes('❌') ||
               msg.includes('🔄') ||
-              msg.includes('Total:') ||
-              msg.includes('rotating') ||
-              msg.includes('Refreshed') ||
+              msg.includes('💾') ||
+              msg.includes('📋') ||
+              msg.includes('🔌') ||
+              msg.includes('Total') ||
+              msg.includes('new') ||
+              msg.includes('ads') ||
+              msg.includes('Scan') ||
+              msg.includes('Saved') ||
+              msg.includes('Found') ||
               msg.includes('completed') ||
               msg.includes('started');
 
-            if (isImportant) {
+            if (shouldBroadcast) {
               broadcastUpdate({
                 type: 'log',
                 extractionId: extractionId,

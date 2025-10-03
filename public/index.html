@@ -791,7 +791,15 @@
 
         function addLogToUI(level, message) {
             const logsContainer = document.getElementById('logsContainer');
-            if (!logsContainer) return;
+            if (!logsContainer) {
+                console.warn('logsContainer not found in DOM');
+                return;
+            }
+
+            // Clear placeholder message on first real log
+            if (logsContainer.children.length === 1 && logsContainer.textContent.includes('Waiting')) {
+                logsContainer.innerHTML = '';
+            }
 
             // Create log entry with timestamp
             const timestamp = new Date().toLocaleTimeString();
@@ -816,6 +824,8 @@
             // Add to container and scroll to bottom
             logsContainer.appendChild(logEntry);
             logsContainer.scrollTop = logsContainer.scrollHeight;
+
+            console.log(`✅ Added log to UI: [${level}] ${message}`);
 
             // Limit to last 100 log entries
             const logEntries = logsContainer.querySelectorAll('.log-entry');
