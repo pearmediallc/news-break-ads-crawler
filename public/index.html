@@ -715,56 +715,61 @@
                     break;
 
                 case 'new_ads':
-                    // Always update total ads count even if no new ads
+                    console.log('📡 Real-time update: new_ads', data);
+
+                    if (data.newAds && data.newAds.length > 0) {
+                        console.log(`📦 Received ${data.newAds.length} new ads via SSE`);
+
+                        // Clear "No ads found" message if it exists
+                        const grid = document.getElementById('adsGrid');
+                        if (grid && grid.querySelector('.no-ads')) {
+                            grid.innerHTML = '';
+                        }
+
+                        // Initialize adsData if needed
+                        if (!adsData) adsData = [];
+
+                        // Create a map of existing ads for duplicate checking
+                        const existingAdsMap = new Map();
+                        adsData.forEach(ad => {
+                            const key = `${ad.advertiser || ad.sponsor || ''}_${ad.headline || ad.heading || ''}_${ad.timestamp || ''}`;
+                            existingAdsMap.set(key, ad);
+                        });
+
+                        // Filter out duplicates before adding
+                        const uniqueNewAds = data.newAds.filter(newAd => {
+                            const key = `${newAd.advertiser || newAd.sponsor || ''}_${newAd.headline || newAd.heading || ''}_${newAd.timestamp || ''}`;
+
+                            // Also check by ID if available
+                            const hasId = adsData.some(existingAd =>
+                                existingAd.id && newAd.id && existingAd.id === newAd.id
+                            );
+
+                            return !existingAdsMap.has(key) && !hasId;
+                        });
+
+                        if (uniqueNewAds.length > 0) {
+                            console.log(`Adding ${uniqueNewAds.length} unique new ads (filtered ${data.newAds.length - uniqueNewAds.length} duplicates)`);
+
+                            // Add only unique new ads
+                            adsData.push(...uniqueNewAds);
+
+                            // Redisplay all ads (including new ones)
+                            displayAds(adsData);
+                            updateStats(adsData);
+
+                            showAlert('success', `🆕 ${uniqueNewAds.length} new ads found!`);
+                        } else {
+                            console.log('All received ads were duplicates, skipping update');
+                        }
+                    }
+
+                    // Update total count if provided
                     if (data.totalAds !== undefined) {
                         updateAdCount(data.totalAds);
                     }
 
-                    // Force refresh the ads display with latest data
-                    if (data.newAds && data.newAds.length > 0) {
-                        console.log(`📦 Received ${data.newAds.length} new ads via SSE`);
-
-                        // Add new ads to the existing adsData array
-                        if (!adsData) adsData = [];
-                        adsData.push(...data.newAds);
-
-                        // Redisplay all ads (including new ones)
-                        displayAds(adsData);
-                        updateStats(adsData);
-
-                        showAlert('success', `${data.newAds.length} new ads extracted`);
-                    }
-
-                    // Check if we need to display ads
-                    const adsGrid = document.getElementById('adsGrid');
-                    const hasDisplayedAds = adsGrid && adsGrid.children.length > 0 && !adsGrid.innerHTML.includes('No ads found');
-
-                    // Add new ads to the display dynamically
-                    if (data.newAds && data.newAds.length > 0) {
-                        // Add new ads to our local data
-                        adsData = [...(adsData || []), ...data.newAds];
-
-                        // If we have a database session, load all ads from DB
-                        if (data.sessionId) {
-                            // Load all ads for this session from database
-                            loadSessionAdsFromDatabase(data.sessionId);
-                        } else {
-                            // Otherwise, add new ads to display
-                            addNewAdsToDisplay(data.newAds);
-                        }
-
-                        showAlert('info', `🆕 ${data.newAds.length} new ads found!`);
-                    } else if (data.latestAds && data.latestAds.length > 0) {
-                        if (!hasDisplayedAds) {
-                            // If no ads are currently displayed, show the latest ads
-                            displayAds(data.latestAds);
-                        } else {
-                            // If ads are displayed but count changed, refresh display
-                            loadSessionData(currentSessionFile);
-                        }
-                    }
-
-                    // Update session info with new count
+                    // Update session info
                     updateSessionInfo();
                     break;
 
