@@ -87,24 +87,29 @@ class DatabaseModels {
   // Ad operations
   async saveAd(adData) {
     try {
-      // First check if ad already exists (avoid duplicates)
-      if (adData.id || adData.ad_id) {
-        const existing = await this.db.get(
-          'SELECT id FROM ads WHERE ad_id = ? AND session_id = ?',
-          [adData.id || adData.ad_id, adData.sessionId]
-        );
-        if (existing) {
-          logger.debug(`Ad already exists: ${adData.id || adData.ad_id}`);
-          return { id: existing.id, changes: 0 };
-        }
+      // Generate ad signature for multi-thread deduplication
+      // Use same logic as extractionWorker.js
+      const headline = (adData.heading || adData.headline || '').trim().toLowerCase();
+      const body = (adData.description || adData.body || '').trim().toLowerCase().substring(0, 200);
+      const advertiser = (adData.adNetwork || adData.ad_network || adData.advertiser || '').trim().toLowerCase();
+      const adSignature = `${headline}_${body}_${advertiser}`;
+
+      // First check if ad already exists by signature (cross-thread deduplication)
+      const existing = await this.db.get(
+        'SELECT id FROM ads WHERE ad_signature = ?',
+        [adSignature]
+      );
+      if (existing) {
+        logger.debug(`Duplicate ad detected (signature match): ${headline.substring(0, 30)}...`);
+        return { id: existing.id, changes: 0, duplicate: true };
       }
 
       const sql = `
         INSERT INTO ads (
           session_id, ad_id, heading, description, image_url, link_url,
           ad_network, timestamp, element_html, position_x, position_y,
-          width, height, viewport_width, viewport_height
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          width, height, viewport_width, viewport_height, ad_signature
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
 
       const params = [
@@ -122,17 +127,18 @@ class DatabaseModels {
         adData.dimensions?.width || adData.width || null,
         adData.dimensions?.height || adData.height || null,
         adData.viewport?.width || adData.viewport_width || null,
-        adData.viewport?.height || adData.viewport_height || null
+        adData.viewport?.height || adData.viewport_height || null,
+        adSignature  // NEW: Add signature for UNIQUE constraint
       ];
 
       const result = await this.db.run(sql, params);
       logger.debug(`Saved ad to database: session ${adData.sessionId}`);
       return result;
     } catch (error) {
-      // Check if it's a unique constraint violation (duplicate)
+      // Check if it's a unique constraint violation (duplicate from another thread)
       if (error.message && error.message.includes('UNIQUE constraint failed')) {
-        logger.debug('Duplicate ad detected, skipping');
-        return { id: null, changes: 0 };
+        logger.debug('Duplicate ad detected by database constraint (from another thread)');
+        return { id: null, changes: 0, duplicate: true };
       }
       logger.error('Failed to save ad:', error);
       throw error;

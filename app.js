@@ -186,9 +186,16 @@ app.delete('/api/users/:username', requireAuth, requireAdmin, async (req, res) =
     }
 });
 
-// API endpoint to start extraction - Admin only
+// API endpoint to start extraction - Admin only (NOW WITH MULTI-THREADING)
 app.post('/api/extract/start', requireAuth, requireAdmin, async (req, res) => {
-    const { url, duration, deviceMode = 'desktop', extractionMode = 'timed' } = req.body;
+    const {
+        url,
+        duration,
+        deviceMode = 'desktop',
+        extractionMode = 'unlimited', // Changed default to unlimited
+        useMultiThread = true, // NEW: Enable multi-threading by default
+        maxWorkers = 5 // NEW: Default 5 workers
+    } = req.body;
 
     // Validate input
     if (!url || !url.includes('newsbreak.com')) {
@@ -201,38 +208,73 @@ app.post('/api/extract/start', requireAuth, requireAdmin, async (req, res) => {
     const durationMinutes = extractionMode === 'unlimited' ? null : (parseInt(duration) || 5);
 
     try {
-        console.log(`Starting ${extractionMode} extraction...`);
-        console.log(`URL: ${url}, Duration: ${durationMinutes ? durationMinutes + ' minutes' : 'unlimited'}, Device: ${deviceMode}`);
+        // Use multi-threading for unlimited mode (better performance)
+        if (useMultiThread && extractionMode === 'unlimited') {
+            // Check if multi-thread extractor is already running
+            if (multiThreadExtractor && multiThreadExtractor.getStatus().isRunning) {
+                return res.status(400).json({
+                    error: 'Multi-thread extraction already running. Stop it first or use single-thread mode.'
+                });
+            }
 
-        // Use background extraction service for better reliability
-        const result = await backgroundExtractor.startExtraction({
-            url,
-            duration: durationMinutes,
-            deviceMode,
-            extractionMode,
-            sessionId: extractionId
-        });
+            console.log(`🚀 Starting MULTI-THREAD extraction with ${maxWorkers} workers`);
+            console.log(`URL: ${url}, Mode: unlimited, Device: ${deviceMode}`);
 
-        // Store extraction reference
-        activeExtractions.set(extractionId, {
-            backgroundExtraction: true,
-            startTime: new Date(),
-            url,
-            duration: durationMinutes,
-            deviceMode,
-            extractionMode,
-            status: 'running',
-            logs: []
-        });
+            multiThreadExtractor = new MultiThreadExtractor({
+                maxWorkers: parseInt(maxWorkers) || 5,
+                deviceMode,
+                restartOnFailure: true,
+                sameUrl: false, // Different URLs for better ad diversity
+                baseUrl: url
+            });
 
-        res.json({
-            extractionId,
-            message: `${extractionMode} extraction started successfully`,
-            duration: durationMinutes ? `${durationMinutes} minutes` : 'unlimited',
-            url,
-            extractionMode,
-            deviceMode
-        });
+            await multiThreadExtractor.start();
+
+            res.json({
+                extractionId,
+                message: `Multi-thread extraction started with ${maxWorkers} workers`,
+                mode: 'multi-thread',
+                workers: maxWorkers,
+                extractionMode: 'unlimited',
+                url,
+                deviceMode
+            });
+
+        } else {
+            // Single-thread extraction (original behavior)
+            console.log(`Starting ${extractionMode} extraction (single-thread)...`);
+            console.log(`URL: ${url}, Duration: ${durationMinutes ? durationMinutes + ' minutes' : 'unlimited'}, Device: ${deviceMode}`);
+
+            const result = await backgroundExtractor.startExtraction({
+                url,
+                duration: durationMinutes,
+                deviceMode,
+                extractionMode,
+                sessionId: extractionId
+            });
+
+            // Store extraction reference
+            activeExtractions.set(extractionId, {
+                backgroundExtraction: true,
+                startTime: new Date(),
+                url,
+                duration: durationMinutes,
+                deviceMode,
+                extractionMode,
+                status: 'running',
+                logs: []
+            });
+
+            res.json({
+                extractionId,
+                message: `${extractionMode} extraction started successfully (single-thread)`,
+                mode: 'single-thread',
+                duration: durationMinutes ? `${durationMinutes} minutes` : 'unlimited',
+                url,
+                extractionMode,
+                deviceMode
+            });
+        }
 
     } catch (error) {
         res.status(500).json({

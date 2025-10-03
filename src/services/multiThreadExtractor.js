@@ -9,7 +9,7 @@ const { URLRotationManager } = require('../config/urlRotation');
 
 class MultiThreadExtractor {
   constructor(config = {}) {
-    this.maxWorkers = config.maxWorkers || 3; // Default: 3 parallel workers
+    this.maxWorkers = config.maxWorkers || 5; // Default: 5 parallel workers (increased for better performance)
     this.workers = new Map(); // workerId -> worker info
     this.urlRotation = new URLRotationManager();
     this.sharedSessionId = null;
@@ -26,9 +26,9 @@ class MultiThreadExtractor {
       deviceMode: config.deviceMode || 'desktop',
       extractionMode: 'unlimited',
       restartOnFailure: true,
-      workerRestartDelay: 5000, // 5 seconds
-      sameUrl: config.sameUrl || false, // NEW: All workers on same URL
-      baseUrl: config.baseUrl || null, // NEW: URL to use if sameUrl=true
+      workerRestartDelay: 3000, // 3 seconds (faster restart)
+      sameUrl: config.sameUrl || false, // All workers on same URL
+      baseUrl: config.baseUrl || null, // URL to use if sameUrl=true
       ...config
     };
   }

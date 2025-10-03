@@ -185,7 +185,7 @@ class DatabaseConnection {
       `);
       logger.info('Created sessions table');
 
-      // Create ads table
+      // Create ads table with UNIQUE constraint for multi-thread deduplication
       await this.run(`
         CREATE TABLE IF NOT EXISTS ads (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -205,7 +205,9 @@ class DatabaseConnection {
           viewport_width INTEGER,
           viewport_height INTEGER,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+          ad_signature TEXT,
+          FOREIGN KEY (session_id) REFERENCES sessions(session_id),
+          UNIQUE(ad_signature)
         )
       `);
       logger.info('Created ads table');
