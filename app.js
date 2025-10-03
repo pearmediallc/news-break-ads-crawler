@@ -982,28 +982,44 @@ const sseConnections = new Set();
 
 // SSE endpoint for real-time updates
 app.get('/api/events', (req, res) => {
-  // Set SSE headers
+  // Set SSE headers with additional headers for proxies
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
+    'Cache-Control': 'no-cache, no-transform',
     'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no', // Disable nginx buffering
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Cache-Control'
   });
 
   // Send initial connection message
   res.write('data: {"type":"connected","message":"Real-time updates connected"}\n\n');
+  console.log('✅ SSE client connected. Total connections:', sseConnections.size + 1);
 
   // Add connection to active connections
   sseConnections.add(res);
 
+  // Send heartbeat every 15 seconds to keep connection alive
+  const heartbeatInterval = setInterval(() => {
+    try {
+      res.write(': heartbeat\n\n');
+    } catch (error) {
+      clearInterval(heartbeatInterval);
+      sseConnections.delete(res);
+    }
+  }, 15000);
+
   // Handle client disconnect
   req.on('close', () => {
+    clearInterval(heartbeatInterval);
     sseConnections.delete(res);
+    console.log('❌ SSE client disconnected. Remaining connections:', sseConnections.size);
   });
 
   req.on('aborted', () => {
+    clearInterval(heartbeatInterval);
     sseConnections.delete(res);
+    console.log('❌ SSE client aborted. Remaining connections:', sseConnections.size);
   });
 });
 
