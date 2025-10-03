@@ -1278,6 +1278,25 @@ class WorkerAdExtractor {
         }
       }
 
+      // Ensure session exists in database first (for foreign key constraint)
+      try {
+        // Check if session already exists, if not create it
+        const existingSession = await dbSync.db.getSession(this.sessionTimestamp);
+        if (!existingSession) {
+          logger.info(`Creating session in database: ${this.sessionTimestamp}`);
+          await dbSync.db.createSession({
+            sessionId: this.sessionTimestamp,
+            startTime: new Date().toISOString(),
+            url: workerData.url,
+            duration: workerData.duration || 0,
+            deviceMode: workerData.deviceMode || 'desktop',
+            status: 'active'
+          });
+        }
+      } catch (sessionError) {
+        logger.warn(`Failed to create session: ${sessionError.message}`);
+      }
+
       // Try to save ads
       try {
         await dbSync.syncAds(newAds, this.sessionTimestamp);
