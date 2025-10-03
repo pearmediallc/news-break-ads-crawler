@@ -1011,7 +1011,7 @@ app.get('/api/events', (req, res) => {
 function broadcastUpdate(data) {
   const message = `data: ${JSON.stringify(data)}\n\n`;
 
-  console.log(`📡 Broadcasting to ${sseConnections.size} clients:`, data.type);
+  console.log(`📡 Broadcasting to ${sseConnections.size} clients:`, data.type, data.message || '');
 
   // Send to all connected clients
   sseConnections.forEach(connection => {
@@ -1029,6 +1029,18 @@ function broadcastUpdate(data) {
     console.warn('⚠️ No SSE connections available for broadcast');
   }
 }
+
+// Test endpoint to verify SSE is working
+app.get('/api/test-sse', (req, res) => {
+  console.log('🧪 Test SSE broadcast requested');
+  broadcastUpdate({
+    type: 'log',
+    level: 'info',
+    message: '🧪 TEST MESSAGE - If you see this, SSE is working!',
+    timestamp: new Date().toISOString()
+  });
+  res.json({ success: true, message: 'Test broadcast sent' });
+});
 
 // Initialize services
 (async () => {
