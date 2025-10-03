@@ -594,50 +594,68 @@
 
         async function checkActiveExtractions() {
             try {
+                console.log('🔍 [ACTIVE_CHECK] Fetching active extractions...');
                 const response = await fetch('/api/extract/active');
                 const data = await response.json();
 
                 if (data.success && data.activeExtractions.length > 0) {
-                    console.log('🔄 Found active extractions:', data.activeExtractions);
+                    console.log('🔄 [ACTIVE_CHECK] Found active extractions:', data.activeExtractions);
 
                     // Show extraction window for the first active extraction
                     const activeExtraction = data.activeExtractions[0];
+                    console.log('📊 [ACTIVE_CHECK] Active extraction details:', {
+                        id: activeExtraction.id,
+                        sessionId: activeExtraction.sessionId,
+                        sessionFile: activeExtraction.sessionFile,
+                        totalAds: activeExtraction.totalAds
+                    });
 
                     // Use the proper showExtractionWindow function to ensure all UI elements are shown
                     showExtractionWindow(activeExtraction);
 
                     // Load ads for the active session
                     const sessionFile = activeExtraction.sessionFile || `worker_${activeExtraction.sessionId}.json`;
-                    console.log(`📂 Loading ads for active session: ${sessionFile}`);
+                    console.log(`📂 [ACTIVE_CHECK] Will load session file: ${sessionFile}`);
 
                     // Update session selector to show the active session
                     const selector = document.getElementById('sessionSelector');
                     if (selector) {
+                        console.log(`🔍 [ACTIVE_CHECK] Searching in ${selector.options.length} dropdown options...`);
+                        let found = false;
                         // Try to find and select the matching session in the dropdown
                         for (let i = 0; i < selector.options.length; i++) {
+                            console.log(`   Option ${i}: value="${selector.options[i].value}" text="${selector.options[i].text}"`);
                             if (selector.options[i].value === sessionFile ||
                                 selector.options[i].value === activeExtraction.sessionId) {
                                 selector.selectedIndex = i;
-                                console.log(`✅ Auto-selected active session in dropdown: ${selector.options[i].text}`);
+                                console.log(`✅ [ACTIVE_CHECK] Auto-selected option ${i}: ${selector.options[i].text}`);
+                                found = true;
                                 break;
                             }
                         }
+                        if (!found) {
+                            console.warn(`⚠️ [ACTIVE_CHECK] Session file "${sessionFile}" not found in dropdown!`);
+                        }
+                    } else {
+                        console.error('❌ [ACTIVE_CHECK] Session selector element not found!');
                     }
 
                     // Load the session's ads
+                    console.log(`📂 [ACTIVE_CHECK] Calling loadSession("${sessionFile}")...`);
                     await loadSession(sessionFile);
+                    console.log(`✅ [ACTIVE_CHECK] loadSession completed`);
 
                     // Show success message
                     showAlert('info', `🔄 Reconnected to active extraction: ${activeExtraction.id}`);
                 } else {
                     // No active extractions - clear any stale extraction IDs
-                    console.log('✅ No active extractions found, clearing stale tracking...');
+                    console.log('✅ [ACTIVE_CHECK] No active extractions found');
                     currentExtractionId = null;
                     window.currentExtractionId = null;
                     stopStatusMonitoring();
                 }
             } catch (error) {
-                console.error('Failed to check active extractions:', error);
+                console.error('❌ [ACTIVE_CHECK] Failed to check active extractions:', error);
                 // On error, also clear stale IDs to prevent continuous 404s
                 currentExtractionId = null;
                 window.currentExtractionId = null;
@@ -983,28 +1001,39 @@
 
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', async () => {
+            console.log('🚀 [PAGE_LOAD] Initializing page...');
+
+            // Load stats (non-blocking)
             loadStats();
-            loadSessions();
 
             // Connect to real-time updates FIRST
             connectToRealTimeUpdates();
 
+            // Load sessions FIRST and WAIT for it to complete
+            // This is critical so the dropdown is populated before we try to select
+            console.log('📋 [PAGE_LOAD] Loading sessions...');
+            await loadSessions();
+            console.log('✅ [PAGE_LOAD] Sessions loaded');
+
             // Check for active extractions BEFORE loading ads
             // This ensures we load the active session's ads, not "All Sessions"
+            console.log('🔍 [PAGE_LOAD] Checking for active extractions...');
             await checkActiveExtractions();
 
             // If no active extraction was found, load all ads
             if (!currentExtractionId) {
-                console.log('📂 No active extraction - loading all ads');
+                console.log('📂 [PAGE_LOAD] No active extraction - loading all ads');
                 loadAds();
             } else {
-                console.log('✅ Active extraction found - ads already loaded');
+                console.log('✅ [PAGE_LOAD] Active extraction found - ads already loaded');
             }
 
             updateSessionInfo();
 
             // Set up form submission
             document.getElementById('extractionForm').addEventListener('submit', startExtraction);
+
+            console.log('✅ [PAGE_LOAD] Page initialization complete');
         });
 
         async function startExtraction(e) {
