@@ -319,24 +319,33 @@ class BackgroundExtractionService {
         // Sync to database only if session exists
         try {
           if (data.newAds && data.newAds.length > 0 && sessionId) {
+            console.log(`💾 [ADS_UPDATE] Attempting to sync ${data.newAds.length} ads to database for session ${sessionId}`);
             logger.info(`💾 Syncing ${data.newAds.length} ads to database for session ${sessionId}`);
 
             // Ensure database is initialized before syncing
             if (!this.dbSync.initialized) {
+              console.log(`🔄 [DB_INIT] Database not initialized, initializing now...`);
               await this.dbSync.initialize().catch(err => {
+                console.error(`❌ [DB_INIT] Database initialization failed:`, err.message);
                 logger.warn('Database initialization failed, continuing without DB sync:', err.message);
                 this.dbSync.initialized = false;
               });
             }
 
             if (this.dbSync.initialized) {
+              console.log(`✅ [DB_READY] Database initialized, calling syncAds...`);
               await this.dbSync.syncAds(data.newAds, sessionId);
+              console.log(`✅ [DB_SAVED] Successfully synced ${data.newAds.length} ads to database`);
               logger.info(`✅ Successfully synced ${data.newAds.length} ads to database`);
             } else {
+              console.warn(`⚠️ [DB_FAILED] Database not initialized - ads saved to JSON only`);
               logger.warn('⚠️ Database not initialized - ads saved to JSON only');
             }
+          } else {
+            console.log(`⚠️ [ADS_UPDATE] Skipping DB sync - newAds: ${data.newAds?.length || 0}, sessionId: ${sessionId || 'null'}`);
           }
         } catch (error) {
+          console.error(`❌ [DB_ERROR] Failed to sync ads to database:`, error);
           logger.warn('Failed to sync ads to database:', error.message);
           // Don't let database errors stop the extraction
         }
