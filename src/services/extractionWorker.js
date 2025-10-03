@@ -16,6 +16,11 @@ class WorkerAdExtractor {
   constructor() {
     // NO MORE STORING ADS IN MEMORY - Direct to database
     this.seenAds = new Set(); // Keep only for deduplication
+    this.seenAdsArray = []; // Track insertion order for sliding window
+    this.maxSeenAdsCache = 500; // Sliding window: keep last 500 ad signatures
+    this.lastSeenAdsCleanup = Date.now();
+    this.seenAdsCleanupInterval = 10 * 60 * 1000; // Cleanup every 10 minutes
+
     this.recentAds = []; // Keep only last 10 ads for UI display
     this.sessionTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
     this.sessionFile = path.join(process.cwd(), 'data', 'sessions', `worker_${this.sessionTimestamp}.json`);
@@ -569,7 +574,7 @@ class WorkerAdExtractor {
         return extractedAds;
       }, extractionMode);
 
-      // Filter new ads with improved deduplication
+      // Filter new ads with sliding window deduplication
       const newAds = ads.filter(ad => {
         // Create normalized key for better duplicate detection
         const headline = (ad.headline || '').trim().toLowerCase();
@@ -587,7 +592,20 @@ class WorkerAdExtractor {
           }
           return false;
         }
+
+        // Add to both Set and Array for sliding window management
         this.seenAds.add(key);
+        this.seenAdsArray.push(key);
+
+        // Implement sliding window: remove oldest entries if cache exceeds limit
+        if (this.seenAdsArray.length > this.maxSeenAdsCache) {
+          const oldestKey = this.seenAdsArray.shift();
+          this.seenAds.delete(oldestKey);
+          if (this.seenAdsArray.length % 100 === 0) {
+            logger.debug(`🧹 Sliding window: Removed oldest ad from cache (cache size: ${this.seenAds.size})`);
+          }
+        }
+
         return true;
       });
 
@@ -676,8 +694,8 @@ class WorkerAdExtractor {
               logger.debug(`Interaction attempt failed: ${interactionError.message}`);
             }
 
-            // If still stuck after 20 attempts, try page refresh
-            if (this.consecutiveNoNewAds > 20) {
+            // If still stuck after 8 attempts, try page refresh
+            if (this.consecutiveNoNewAds > 8) {
               logger.info(`🔄 Refreshing page to load new ad inventory...`);
               try {
                 await this.page.reload({ waitUntil: 'networkidle2', timeout: 30000 });
@@ -1384,9 +1402,9 @@ class WorkerAdExtractor {
       await this.extractAds();
 
       // In unlimited mode, run forever. In timed mode, check duration
-      // Use same timing as ads-logic folder for optimal extraction
-      const scanInterval = workerData.extractionMode === 'unlimited' ? 3000 : 5000; // 3s scan interval in unlimited
-      const scrollInterval = workerData.extractionMode === 'unlimited' ? 2500 : 3000; // 2.5s scroll interval in unlimited
+      // Use faster timing for better ad discovery
+      const scanInterval = workerData.extractionMode === 'unlimited' ? 2500 : 5000; // 2.5s scan interval in unlimited
+      const scrollInterval = workerData.extractionMode === 'unlimited' ? 1500 : 3000; // 1.5s scroll interval in unlimited (faster)
 
       while (this.isRunning && (workerData.extractionMode === 'unlimited' || (Date.now() - this.startTime) < durationMs)) {
         extractionCount++;
@@ -1470,13 +1488,26 @@ class WorkerAdExtractor {
           }
         }
 
+        // Periodic seenAds cleanup (every 10 minutes)
+        if (workerData.extractionMode === 'unlimited' && Date.now() - this.lastSeenAdsCleanup >= this.seenAdsCleanupInterval) {
+          const oldSize = this.seenAds.size;
+          // Keep only the most recent entries
+          if (this.seenAdsArray.length > this.maxSeenAdsCache) {
+            const removeCount = this.seenAdsArray.length - this.maxSeenAdsCache;
+            const removed = this.seenAdsArray.splice(0, removeCount);
+            removed.forEach(key => this.seenAds.delete(key));
+            logger.info(`🧹 Periodic cleanup: Removed ${removeCount} old ad signatures (${oldSize} → ${this.seenAds.size})`);
+          }
+          this.lastSeenAdsCleanup = Date.now();
+        }
+
         // Browser health check every 2 hours
         if (workerData.extractionMode === 'unlimited' && Date.now() - this.lastBrowserHealthCheck >= this.browserHealthCheckInterval) {
           await this.performBrowserHealthCheck();
         }
 
-        // URL rotation for unlimited mode when stuck
-        if (workerData.extractionMode === 'unlimited' && this.consecutiveNoNewAds >= 50) {
+        // URL rotation for unlimited mode when stuck (reduced threshold for faster rotation)
+        if (workerData.extractionMode === 'unlimited' && this.consecutiveNoNewAds >= 12) {
           await this.rotateToNewUrl();
         }
 
