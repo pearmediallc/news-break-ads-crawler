@@ -606,6 +606,27 @@
                     // Use the proper showExtractionWindow function to ensure all UI elements are shown
                     showExtractionWindow(activeExtraction);
 
+                    // Load ads for the active session
+                    const sessionFile = activeExtraction.sessionFile || `worker_${activeExtraction.sessionId}.json`;
+                    console.log(`📂 Loading ads for active session: ${sessionFile}`);
+
+                    // Update session selector to show the active session
+                    const selector = document.getElementById('sessionSelector');
+                    if (selector) {
+                        // Try to find and select the matching session in the dropdown
+                        for (let i = 0; i < selector.options.length; i++) {
+                            if (selector.options[i].value === sessionFile ||
+                                selector.options[i].value === activeExtraction.sessionId) {
+                                selector.selectedIndex = i;
+                                console.log(`✅ Auto-selected active session in dropdown: ${selector.options[i].text}`);
+                                break;
+                            }
+                        }
+                    }
+
+                    // Load the session's ads
+                    await loadSession(sessionFile);
+
                     // Show success message
                     showAlert('info', `🔄 Reconnected to active extraction: ${activeExtraction.id}`);
                 } else {
@@ -961,17 +982,26 @@
         }
 
         // Initialize on page load
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', async () => {
             loadStats();
-            loadAds();
             loadSessions();
-            updateSessionInfo();
 
-            // Connect to real-time updates
+            // Connect to real-time updates FIRST
             connectToRealTimeUpdates();
 
-            // Check for active extractions on page load
-            checkActiveExtractions();
+            // Check for active extractions BEFORE loading ads
+            // This ensures we load the active session's ads, not "All Sessions"
+            await checkActiveExtractions();
+
+            // If no active extraction was found, load all ads
+            if (!currentExtractionId) {
+                console.log('📂 No active extraction - loading all ads');
+                loadAds();
+            } else {
+                console.log('✅ Active extraction found - ads already loaded');
+            }
+
+            updateSessionInfo();
 
             // Set up form submission
             document.getElementById('extractionForm').addEventListener('submit', startExtraction);
