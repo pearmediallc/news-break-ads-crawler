@@ -307,9 +307,20 @@ class BackgroundExtractionService {
         extraction.totalAds = data.totalAds;
         extraction.latestAds = data.latestAds;
 
+        // Use sessionId from data if available, otherwise fall back to extraction.sessionId
+        const sessionId = data.sessionId || extraction.sessionId;
+
+        // Update extraction sessionId if we got it from worker
+        if (data.sessionId && !extraction.sessionId) {
+          extraction.sessionId = data.sessionId;
+          logger.info(`📋 Session ID received in ads_update: ${sessionId}`);
+        }
+
         // Sync to database only if session exists
         try {
-          if (data.newAds && data.newAds.length > 0 && extraction.sessionId) {
+          if (data.newAds && data.newAds.length > 0 && sessionId) {
+            logger.info(`💾 Syncing ${data.newAds.length} ads to database for session ${sessionId}`);
+
             // Ensure database is initialized before syncing
             if (!this.dbSync.initialized) {
               await this.dbSync.initialize().catch(err => {
@@ -319,7 +330,10 @@ class BackgroundExtractionService {
             }
 
             if (this.dbSync.initialized) {
-              await this.dbSync.syncAds(data.newAds, extraction.sessionId);
+              await this.dbSync.syncAds(data.newAds, sessionId);
+              logger.info(`✅ Successfully synced ${data.newAds.length} ads to database`);
+            } else {
+              logger.warn('⚠️ Database not initialized - ads saved to JSON only');
             }
           }
         } catch (error) {
@@ -327,8 +341,8 @@ class BackgroundExtractionService {
           // Don't let database errors stop the extraction
         }
 
-        // Add session ID to the data for UI
-        data.sessionId = extraction.sessionId;
+        // Ensure session ID is in data for UI
+        data.sessionId = sessionId;
         break;
 
       case 'session_created':

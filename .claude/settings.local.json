@@ -27,7 +27,8 @@
       "Bash(del generatePasswords.js)",
       "Bash(tasklist)",
       "Bash(cat:*)",
-      "Bash(tree:*)"
+      "Bash(tree:*)",
+      "Bash(where chrome)"
     ],
     "deny": [],
     "ask": []

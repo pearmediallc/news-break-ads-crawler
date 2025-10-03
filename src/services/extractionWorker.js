@@ -639,7 +639,9 @@ class WorkerAdExtractor {
         parentPort.postMessage({
           type: 'ads_update',
           data: {
+            sessionId: this.sessionTimestamp, // Include session ID
             totalAds: this.totalAdsExtracted, // Total count
+            totalDbAds: this.totalDbAds, // Database count
             newAds: newAds,
             latestAds: this.recentAds, // Only recent ads for display
             databaseSaved: true // Flag indicating DB save
@@ -959,14 +961,140 @@ class WorkerAdExtractor {
   }
 
   async initializeBrowser() {
-    // Auto-detect headless mode: use headless for production/deployment, GUI for development
+    // TRY ADSPOWER FIRST (if available and running), then fallback to Puppeteer
+    const useAdsPower = workerData.useAdsPower !== false; // Default to true
+
+    if (useAdsPower) {
+      try {
+        logger.info('🔌 Attempting to connect to AdsPower browser...');
+        const axios = require('axios');
+        const adsPowerApiBase = 'http://local.adspower.net:50325';
+
+        // Check if AdsPower is running
+        try {
+          await axios.get(`${adsPowerApiBase}/status`, { timeout: 3000 });
+          logger.info('✅ AdsPower is running');
+        } catch (err) {
+          logger.warn('❌ AdsPower not running, falling back to Puppeteer');
+          throw new Error('AdsPower not available');
+        }
+
+        // Get active profiles
+        const profilesResponse = await axios.get(`${adsPowerApiBase}/api/v1/user/list`, {
+          params: { page: 1, page_size: 100 },
+          timeout: 10000
+        });
+
+        if (profilesResponse.data.code !== 0) {
+          throw new Error('Failed to get AdsPower profiles');
+        }
+
+        const profiles = profilesResponse.data.data.list || [];
+        logger.info(`Found ${profiles.length} AdsPower profiles`);
+
+        // Find any active profile
+        let connectedProfile = null;
+        for (const profile of profiles) {
+          const statusResponse = await axios.get(`${adsPowerApiBase}/api/v1/browser/active`, {
+            params: { user_id: profile.user_id },
+            timeout: 3000
+          });
+
+          if (statusResponse.data.code === 0 && statusResponse.data.data) {
+            connectedProfile = { ...profile, connectionData: statusResponse.data.data };
+            logger.info(`✅ Found active AdsPower profile: ${profile.user_id} (${profile.name || 'Unnamed'})`);
+            break;
+          }
+        }
+
+        // If no active profile, start the first one
+        if (!connectedProfile && profiles.length > 0) {
+          const profileToStart = profiles[0];
+          logger.info(`Starting AdsPower profile: ${profileToStart.user_id}`);
+
+          const startResponse = await axios.get(`${adsPowerApiBase}/api/v1/browser/start`, {
+            params: {
+              user_id: profileToStart.user_id,
+              open_tabs: 1,
+              headless: 0
+            },
+            timeout: 30000
+          });
+
+          if (startResponse.data.code === 0) {
+            connectedProfile = { ...profileToStart, connectionData: startResponse.data.data };
+          }
+        }
+
+        if (!connectedProfile) {
+          throw new Error('No AdsPower profiles available');
+        }
+
+        // Connect to AdsPower browser via CDP
+        const connectionData = connectedProfile.connectionData;
+        let wsEndpoint = null;
+
+        // Try different connection endpoints
+        if (connectionData.ws?.puppeteer) {
+          wsEndpoint = connectionData.ws.puppeteer;
+        } else if (connectionData.ws?.selenium) {
+          wsEndpoint = connectionData.ws.selenium;
+        } else if (connectionData.debug_port) {
+          wsEndpoint = `http://127.0.0.1:${connectionData.debug_port}`;
+        }
+
+        if (!wsEndpoint) {
+          throw new Error('No WebSocket endpoint available from AdsPower');
+        }
+
+        logger.info(`Connecting to AdsPower browser: ${wsEndpoint}`);
+        this.browser = await puppeteer.connect({
+          browserWSEndpoint: wsEndpoint,
+          defaultViewport: null
+        });
+
+        const pages = await this.browser.pages();
+        this.page = pages.length > 0 ? pages[0] : await this.browser.newPage();
+
+        logger.info('✅ Connected to AdsPower browser successfully');
+        logger.info('📊 Using existing browser session - no launch needed');
+
+        // Check current URL and navigate if needed
+        const currentUrl = await this.page.url();
+        logger.info(`Current page: ${currentUrl}`);
+
+        if (!currentUrl.includes('newsbreak.com')) {
+          logger.info(`🌐 Navigating to ${workerData.url}...`);
+          try {
+            await this.page.goto(workerData.url, {
+              waitUntil: 'networkidle2',
+              timeout: 60000
+            });
+            logger.info('✅ Navigation completed');
+          } catch (navError) {
+            logger.warn(`Navigation warning: ${navError.message}`);
+          }
+          await new Promise(resolve => setTimeout(resolve, 3000));
+        } else {
+          logger.info('✅ Already on NewsBreak - skipping navigation');
+        }
+
+        // Skip the rest of initialization - we're already connected
+        return;
+
+      } catch (adsPowerError) {
+        logger.warn(`AdsPower connection failed: ${adsPowerError.message}`);
+        logger.info('Falling back to Puppeteer browser launch...');
+      }
+    }
+
+    // FALLBACK: Launch Puppeteer browser (original code)
     const isProduction = process.env.NODE_ENV === 'production' ||
                          process.env.DEPLOYMENT === 'true' ||
-                         !process.env.DISPLAY; // No display available (Linux servers)
+                         !process.env.DISPLAY;
 
     logger.info(`🖥️ Browser Mode: ${isProduction ? 'Headless (Server/Production)' : 'GUI (Development)'}`);
 
-    // Retry browser launch up to 3 times
     let browserLaunched = false;
     let lastError = null;
 
@@ -975,7 +1103,7 @@ class WorkerAdExtractor {
         logger.info(`🚀 Browser launch attempt ${attempt}/3...`);
 
         this.browser = await puppeteer.launch({
-          headless: isProduction ? 'new' : false,  // Headless in production, GUI in development
+          headless: isProduction ? 'new' : false,
           args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -987,14 +1115,12 @@ class WorkerAdExtractor {
             '--disable-blink-features=AutomationControlled',
             '--disable-extensions',
             '--disable-plugins',
-            '--disable-images', // Faster loading
+            '--disable-images',
             '--disable-javascript-harmony-shipping',
             '--disable-background-timer-throttling',
             '--disable-backgrounding-occluded-windows',
             '--disable-renderer-backgrounding',
-
-            // MEMORY OPTIMIZATIONS for 512MB limit
-            '--max-old-space-size=256', // Reduced from 4096 to 256MB
+            '--max-old-space-size=256',
             '--js-flags=--max-old-space-size=256',
             '--memory-pressure-off',
             '--disable-shared-workers',
@@ -1003,26 +1129,20 @@ class WorkerAdExtractor {
             '--disable-features=BlinkGenPropertyTrees',
             '--disable-ipc-flooding-protection',
             '--disable-background-networking',
-            '--disable-background-timer-throttling',
-            '--disable-renderer-backgrounding',
             '--disable-features=site-per-process',
             '--disable-features=IsolateOrigins',
-            '--single-process', // Run Chrome in single process mode (saves memory)
-            '--no-zygote', // Disable zygote process (saves memory)
+            '--single-process',
+            '--no-zygote',
             '--disable-accelerated-2d-canvas',
             '--disable-canvas-aa',
             '--disable-2d-canvas-clip-aa',
             '--disable-gl-drawing-for-tests',
-
-            // Additional server/deployment flags
             '--disable-crash-reporter',
             '--disable-software-rasterizer',
             '--disable-sync',
             '--disable-translate',
             '--hide-scrollbars',
             '--mute-audio',
-
-            // Remove problematic flags for Windows
             ...(isProduction ? [
               '--disable-gpu-sandbox',
               '--disable-features=VizDisplayCompositor,VizHitTestSurfaceLayer'
@@ -1031,7 +1151,6 @@ class WorkerAdExtractor {
           defaultViewport: null,
           ignoreDefaultArgs: ['--enable-automation'],
           ignoreHTTPSErrors: true,
-          // Add timeout for browser launch
           timeout: 30000
         });
 
