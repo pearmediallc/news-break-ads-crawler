@@ -21,11 +21,14 @@ CREATE TABLE IF NOT EXISTS ads (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id TEXT NOT NULL,
   ad_id TEXT,
+  ad_signature TEXT,
   heading TEXT,
   description TEXT,
   image_url TEXT,
   link_url TEXT,
   ad_network TEXT,
+  ad_type TEXT,
+  container_id TEXT,
   timestamp DATETIME NOT NULL,
   element_html TEXT,
   position_x INTEGER,
@@ -51,6 +54,7 @@ CREATE TABLE IF NOT EXISTS ad_networks (
 CREATE INDEX IF NOT EXISTS idx_ads_session_id ON ads(session_id);
 CREATE INDEX IF NOT EXISTS idx_ads_timestamp ON ads(timestamp);
 CREATE INDEX IF NOT EXISTS idx_ads_ad_network ON ads(ad_network);
+CREATE INDEX IF NOT EXISTS idx_ads_ad_signature ON ads(ad_signature);
 CREATE INDEX IF NOT EXISTS idx_sessions_start_time ON sessions(start_time);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
 

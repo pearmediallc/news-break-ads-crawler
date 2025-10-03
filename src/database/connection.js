@@ -30,6 +30,9 @@ class DatabaseConnection {
       // Initialize schema
       await this.initializeSchema();
 
+      // Run migrations for existing databases
+      await this.runMigrations();
+
       logger.info('Database initialized successfully');
       return true;
     } catch (error) {
@@ -246,6 +249,48 @@ class DatabaseConnection {
     } catch (error) {
       logger.error('Failed to create tables directly:', error);
       throw error;
+    }
+  }
+
+  async runMigrations() {
+    try {
+      logger.info('Running database migrations...');
+
+      // Check if columns exist and add if missing
+      const columnsToAdd = [
+        { table: 'ads', name: 'ad_signature', type: 'TEXT' },
+        { table: 'ads', name: 'ad_type', type: 'TEXT' },
+        { table: 'ads', name: 'container_id', type: 'TEXT' }
+      ];
+
+      for (const column of columnsToAdd) {
+        try {
+          // Check if column exists
+          const tableInfo = await this.all(`PRAGMA table_info(${column.table})`);
+          const exists = tableInfo.some(col => col.name === column.name);
+
+          if (!exists) {
+            logger.info(`Adding column: ${column.table}.${column.name}`);
+            await this.run(`ALTER TABLE ${column.table} ADD COLUMN ${column.name} ${column.type}`);
+            logger.info(`✅ Added column: ${column.table}.${column.name}`);
+          }
+        } catch (err) {
+          logger.warn(`Failed to add column ${column.name}: ${err.message}`);
+        }
+      }
+
+      // Create index for ad_signature if it doesn't exist
+      try {
+        await this.run('CREATE INDEX IF NOT EXISTS idx_ads_ad_signature ON ads(ad_signature)');
+        logger.info('✅ Created index: idx_ads_ad_signature');
+      } catch (err) {
+        logger.warn(`Failed to create index: ${err.message}`);
+      }
+
+      logger.info('Migrations completed successfully');
+    } catch (error) {
+      logger.warn('Migrations encountered errors:', error.message);
+      // Don't throw - migrations are best-effort
     }
   }
 
