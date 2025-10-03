@@ -357,6 +357,23 @@
             background: #f3f4f6;
         }
 
+        .logs-container {
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            margin-bottom: 20px;
+        }
+
+        .log-entry {
+            padding: 4px 0;
+            line-height: 1.4;
+        }
+
         @media (max-width: 768px) {
             .ads-grid {
                 grid-template-columns: 1fr;
@@ -433,6 +450,13 @@
                     <button onclick="setQuickRange('week')" class="quick-filter-btn">This Week</button>
                     <button onclick="setQuickRange('last24h')" class="quick-filter-btn">Last 24h</button>
                 </div>
+            </div>
+        </div>
+
+        <div class="ads-container" style="margin-bottom: 20px;">
+            <h3 style="font-size: 18px; font-weight: 600; color: #333; margin-bottom: 15px;">📝 Live Logs</h3>
+            <div class="logs-container" id="logsContainer">
+                <div class="log-entry"><span style="color: #999; font-size: 0.8em;">[System]</span> <span style="color: #666;">Waiting for extraction logs...</span></div>
             </div>
         </div>
 
@@ -1352,8 +1376,45 @@
                 document.getElementById('currentSessionInfo').textContent = '(Current)';
                 refreshAds();
             } else if (data.type === 'log') {
-                // Log extraction messages
-                console.log(`📝 Extraction log: ${data.message}`);
+                // Log extraction messages - display in UI
+                console.log(`[${data.level?.toUpperCase() || 'INFO'}] ${data.message}`);
+                addLogToUI(data.level || 'info', data.message);
+            }
+        }
+
+        // Add log message to UI
+        function addLogToUI(level, message) {
+            const logsContainer = document.getElementById('logsContainer');
+            if (!logsContainer) return;
+
+            // Create log entry with timestamp
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-${level}`;
+
+            // Style based on log level
+            let color = '#333';
+            let icon = '📋';
+            switch (level) {
+                case 'info': color = '#0066cc'; icon = '💡'; break;
+                case 'warn': color = '#ff9900'; icon = '⚠️'; break;
+                case 'error': color = '#cc0000'; icon = '❌'; break;
+                case 'debug': color = '#666'; icon = '🔍'; break;
+            }
+
+            logEntry.innerHTML = `
+                <span style="color: #999; font-size: 0.8em;">[${timestamp}]</span>
+                <span style="color: ${color};">${icon} ${escapeHtml(message)}</span>
+            `;
+
+            // Add to container and scroll to bottom
+            logsContainer.appendChild(logEntry);
+            logsContainer.scrollTop = logsContainer.scrollHeight;
+
+            // Limit to last 100 log entries
+            const logEntries = logsContainer.querySelectorAll('.log-entry');
+            if (logEntries.length > 100) {
+                logEntries[0].remove();
             }
         }
 
