@@ -1,0 +1,3 @@
+# This file ensures the data directory is tracked by git
+# The database files (*.db) in this directory WILL be committed
+# Session JSON files and logs are ignored for cleanliness

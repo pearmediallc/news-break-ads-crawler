@@ -1,0 +1,2 @@
+# This ensures the sessions directory exists in git
+# Session JSON files are temporary and not committed

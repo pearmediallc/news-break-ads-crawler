@@ -6,11 +6,16 @@ node_modules/
 .env.local
 .env.production
 
-# Data files
-data/
-*.json
-!package.json
-!package-lock.json
+# Data files - IMPORTANT: Database is persistent, sessions are temporary
+data/sessions/*.json
+data/*.json
+data/*.log
+data/backups/
+!data/.gitkeep
+!data/sessions/.gitkeep
+# DO NOT ignore data/ directory itself - database must persist
+# DO NOT ignore *.db files - database must be committed
+# Backups are excluded - too large for git
 
 # Logs
 logs/
