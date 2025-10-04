@@ -34,7 +34,8 @@
       "Bash(awk:*)",
       "Bash(for func in refreshAds loadSession applyTimeFilter exportData exportExcel startMultiThreadExtraction stopMultiThreadExtraction loadMultiThreadStats logout createNewSession)",
       "Bash(do echo -n \"$func: \")",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(del nul)"
     ],
     "deny": [],
     "ask": []
