@@ -193,7 +193,7 @@ app.post('/api/extract/start', requireAuth, requireAdmin, async (req, res) => {
         duration,
         deviceMode = 'desktop',
         extractionMode = 'unlimited', // Changed default to unlimited
-        useMultiThread = true, // NEW: Enable multi-threading by default
+        useMultiThread = true, // Enable multi-threading for unlimited mode
         maxWorkers = 5 // NEW: Default 5 workers
     } = req.body;
 
@@ -227,6 +227,11 @@ app.post('/api/extract/start', requireAuth, requireAdmin, async (req, res) => {
                 sameUrl: false, // Different URLs for better ad diversity
                 baseUrl: url
             });
+
+            // Connect SSE updates for multi-thread extraction
+            multiThreadExtractor.onUpdate = (data) => {
+                broadcastUpdate(data);
+            };
 
             await multiThreadExtractor.start();
 

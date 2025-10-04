@@ -307,6 +307,16 @@ class BackgroundExtractionService {
         if (extraction.logs.length > 100) {
           extraction.logs = extraction.logs.slice(-100);
         }
+
+        // Broadcast log to SSE clients
+        if (this.onUpdate && typeof this.onUpdate === 'function') {
+          this.onUpdate({
+            type: 'log',
+            message: data.message,
+            level: data.level || 'info',
+            extractionId: extractionId
+          });
+        }
         break;
 
       case 'ads_update':

@@ -593,7 +593,6 @@
             eventSource = new EventSource('/api/events');
 
             eventSource.onopen = function() {
-                console.log('✅ SSE CONNECTION OPENED - Real-time updates connected');
                 showAlert('success', 'Real-time updates connected');
 
                 // Show real-time indicator
@@ -604,10 +603,8 @@
             };
 
             eventSource.onmessage = function(event) {
-                console.log('📡 SSE MESSAGE RECEIVED:', event.data);
                 try {
                     const data = JSON.parse(event.data);
-                    console.log('📦 Parsed SSE data:', data);
                     handleRealTimeUpdate(data);
                 } catch (error) {
                     console.error('❌ Failed to parse SSE message:', error, 'Raw data:', event.data);
@@ -635,62 +632,39 @@
 
         async function checkActiveExtractions() {
             try {
-                console.log('🔍 [ACTIVE_CHECK] Fetching active extractions...');
                 const response = await authFetch('/api/extract/active');
                 const data = await response.json();
 
                 if (data.success && data.activeExtractions.length > 0) {
-                    console.log('🔄 [ACTIVE_CHECK] Found active extractions:', data.activeExtractions);
-
                     // Show extraction window for the first active extraction
                     const activeExtraction = data.activeExtractions[0];
-                    console.log('📊 [ACTIVE_CHECK] Active extraction details:', {
-                        id: activeExtraction.id,
-                        sessionId: activeExtraction.sessionId,
-                        sessionFile: activeExtraction.sessionFile,
-                        totalAds: activeExtraction.totalAds
-                    });
 
                     // Use the proper showExtractionWindow function to ensure all UI elements are shown
                     showExtractionWindow(activeExtraction);
 
                     // Load ads for the active session
                     const sessionFile = activeExtraction.sessionFile || `worker_${activeExtraction.sessionId}.json`;
-                    console.log(`📂 [ACTIVE_CHECK] Will load session file: ${sessionFile}`);
 
                     // Update session selector to show the active session
                     const selector = document.getElementById('sessionSelector');
                     if (selector) {
-                        console.log(`🔍 [ACTIVE_CHECK] Searching in ${selector.options.length} dropdown options...`);
-                        let found = false;
                         // Try to find and select the matching session in the dropdown
                         for (let i = 0; i < selector.options.length; i++) {
-                            console.log(`   Option ${i}: value="${selector.options[i].value}" text="${selector.options[i].text}"`);
                             if (selector.options[i].value === sessionFile ||
                                 selector.options[i].value === activeExtraction.sessionId) {
                                 selector.selectedIndex = i;
-                                console.log(`✅ [ACTIVE_CHECK] Auto-selected option ${i}: ${selector.options[i].text}`);
-                                found = true;
                                 break;
                             }
                         }
-                        if (!found) {
-                            console.warn(`⚠️ [ACTIVE_CHECK] Session file "${sessionFile}" not found in dropdown!`);
-                        }
-                    } else {
-                        console.error('❌ [ACTIVE_CHECK] Session selector element not found!');
                     }
 
                     // Load the session's ads
-                    console.log(`📂 [ACTIVE_CHECK] Calling loadSession("${sessionFile}")...`);
                     await loadSession(sessionFile);
-                    console.log(`✅ [ACTIVE_CHECK] loadSession completed`);
 
                     // Show success message
                     showAlert('info', `🔄 Reconnected to active extraction: ${activeExtraction.id}`);
                 } else {
                     // No active extractions - clear any stale extraction IDs
-                    console.log('✅ [ACTIVE_CHECK] No active extractions found');
                     currentExtractionId = null;
                     window.currentExtractionId = null;
                     stopStatusMonitoring();
@@ -790,18 +764,13 @@
         }
 
         function handleRealTimeUpdate(data) {
-            console.log('📡 Real-time update received:', data.type, data);
-
             switch (data.type) {
                 case 'connected':
                     console.log('Connected to real-time updates');
                     break;
 
                 case 'new_ads':
-                    console.log('📡 Real-time update: new_ads', data);
-
                     if (data.newAds && data.newAds.length > 0) {
-                        console.log(`📦 Received ${data.newAds.length} new ads via SSE`);
 
                         // Clear "No ads found" message if it exists
                         const grid = document.getElementById('adsGrid');
@@ -883,7 +852,6 @@
 
                 case 'log':
                     // Log messages from extraction worker - display in UI
-                    console.log(`📨 SSE LOG RECEIVED: [${data.level?.toUpperCase() || 'INFO'}] ${data.message}`);
                     addLogToUI(data.level || 'info', data.message);
                     break;
             }
@@ -1228,9 +1196,17 @@
             if (!currentExtractionId) return;
 
             try {
-                const response = await authFetch(`/api/extract/stop/${currentExtractionId}`, {
+                // Try single-thread stop first, then multi-thread stop if that fails
+                let response = await authFetch(`/api/extract/stop/${currentExtractionId}`, {
                     method: 'POST'
                 });
+
+                // If extraction not found (404), try multi-thread stop endpoint
+                if (response.status === 404) {
+                    response = await authFetch('/api/extract/multi-thread/stop', {
+                        method: 'POST'
+                    });
+                }
 
                 // Handle 404 - extraction not found (already stopped)
                 if (response.status === 404) {

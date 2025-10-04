@@ -16,6 +16,7 @@ class MultiThreadExtractor {
     this.startTime = null;
     this.totalAds = 0;
     this.isRunning = false;
+    this.onUpdate = null; // Callback for SSE updates
 
     // Worker coordination
     this.assignedUrls = new Map(); // workerId -> current URL
@@ -163,6 +164,15 @@ class MultiThreadExtractor {
           workerInfo.logs = workerInfo.logs.slice(-50);
         }
 
+        // Broadcast log to SSE clients with worker ID prefix
+        if (this.onUpdate && typeof this.onUpdate === 'function') {
+          this.onUpdate({
+            type: 'log',
+            message: `[Worker ${workerId}] ${message.data.message}`,
+            level: message.data.level || 'info'
+          });
+        }
+
         // Log important messages to console with worker ID prefix
         if (message.data.level === 'error' ||
             message.data.level === 'warn' ||
@@ -179,6 +189,16 @@ class MultiThreadExtractor {
 
         if (message.data.newAds?.length > 0) {
           logger.info(`✨ Worker #${workerId} found ${message.data.newAds.length} new ads (Total across all workers: ${this.totalAds})`);
+
+          // Broadcast new ads to SSE clients
+          if (this.onUpdate && typeof this.onUpdate === 'function') {
+            this.onUpdate({
+              type: 'new_ads',
+              newAds: message.data.newAds,
+              totalAds: this.totalAds,
+              sessionId: this.sharedSessionId
+            });
+          }
         }
         break;
 
