@@ -29,7 +29,8 @@
       "Bash(cat:*)",
       "Bash(tree:*)",
       "Bash(where chrome)",
-      "Read(//c/Users/pearm/Downloads/**)"
+      "Read(//c/Users/pearm/Downloads/**)",
+      "Read(//c/Users/pearm/OneDrive/Desktop/news-break-ads-scroller-version1.3/**)"
     ],
     "deny": [],
     "ask": []
