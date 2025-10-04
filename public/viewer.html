@@ -504,6 +504,7 @@
 
     <script>
         let adsData = [];
+        let originalAdsData = []; // Store unfiltered ads for time range filtering
         let eventSource = null;
         let seenAdIds = new Set();
         let currentSessionFile = null;
@@ -754,6 +755,7 @@
 
                         if (ads && ads.length > 0) {
                             adsData = ads;
+                            originalAdsData = [...ads]; // Store original for filtering
                             console.log(`Loaded ${adsData.length} ads from current session`);
 
                             // Mark all as seen to avoid animation on initial load
@@ -824,6 +826,7 @@
 
                         if (ads && ads.length > 0) {
                             adsData = ads;
+                            originalAdsData = [...ads]; // Store original for filtering
                             console.log(`Loaded ${adsData.length} ads from session ${sessionFile}`);
                             console.log('First ad sample:', adsData[0]);
 
@@ -888,20 +891,34 @@
                 return;
             }
 
+            console.log(`Applying time filter: ${fromDate} to ${toDate}`);
+
+            // Use originalAdsData if available, otherwise use adsData
+            const sourceData = originalAdsData.length > 0 ? originalAdsData : adsData;
+
             // Filter current ads data
-            if (adsData && adsData.length > 0) {
-                const filteredAds = adsData.filter(ad => {
-                    const adTime = new Date(ad.timestamp);
-                    return adTime >= fromTime && adTime <= toTime;
+            if (sourceData && sourceData.length > 0) {
+                const filteredAds = sourceData.filter(ad => {
+                    const adTime = new Date(ad.timestamp || ad.created_at);
+                    const isInRange = adTime >= fromTime && adTime <= toTime;
+                    if (isInRange) {
+                        console.log(`✓ Ad included: ${ad.headline} at ${adTime.toISOString()}`);
+                    }
+                    return isInRange;
                 });
 
+                console.log(`Filter result: ${filteredAds.length} of ${sourceData.length} ads in range`);
+
+                // Update the displayed data
+                adsData = filteredAds;
                 displayAds(filteredAds);
                 updateStats(filteredAds);
 
                 // Update session info
                 document.getElementById('sessionFilterInfo').textContent =
-                    `Filtered: ${filteredAds.length} of ${adsData.length} ads`;
+                    `Filtered: ${filteredAds.length} of ${sourceData.length} ads`;
             } else {
+                console.log('No ads in memory, loading from database with filter');
                 // If no ads loaded, try to load from database with date filter
                 await loadAllFromDatabase(fromDate, toDate);
             }
@@ -909,6 +926,8 @@
 
         // Clear time filters
         async function clearTimeFilters() {
+            console.log('Clearing time filters');
+
             // Clear the date inputs
             document.getElementById('customTimeFrom').value = '';
             document.getElementById('customTimeTo').value = '';
@@ -916,10 +935,20 @@
             // Clear filter info
             document.getElementById('sessionFilterInfo').textContent = '';
 
-            // Reload all ads
-            if (adsData && adsData.length > 0) {
+            // Restore original ads data
+            if (originalAdsData && originalAdsData.length > 0) {
+                console.log(`Restoring original ${originalAdsData.length} ads`);
+                adsData = [...originalAdsData];
                 displayAds(adsData);
                 updateStats(adsData);
+            } else if (adsData && adsData.length > 0) {
+                // Fallback: just redisplay current data
+                displayAds(adsData);
+                updateStats(adsData);
+            } else {
+                // Reload from API
+                console.log('No data in memory, reloading from API');
+                await refreshCurrentView();
             }
         }
 
@@ -1012,6 +1041,7 @@
                     }));
 
                     adsData = mappedAds;
+                    originalAdsData = [...mappedAds]; // Store original for filtering
                     displayAds(mappedAds);
                     updateStats(mappedAds);
 

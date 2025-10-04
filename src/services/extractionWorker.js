@@ -574,40 +574,46 @@ class WorkerAdExtractor {
         return extractedAds;
       }, extractionMode);
 
+      // ============================================================================
+      // DUPLICATE FILTERING DISABLED - SHOW ALL ADS
+      // ============================================================================
       // Filter new ads with sliding window deduplication
-      const newAds = ads.filter(ad => {
-        // Create normalized key for better duplicate detection
-        const headline = (ad.headline || '').trim().toLowerCase();
-        const body = (ad.body || '').trim().toLowerCase().substring(0, 200); // Use first 200 chars for comparison
-        const advertiser = (ad.advertiser || '').trim().toLowerCase();
+      // const newAds = ads.filter(ad => {
+      //   // Create normalized key for better duplicate detection
+      //   const headline = (ad.headline || '').trim().toLowerCase();
+      //   const body = (ad.body || '').trim().toLowerCase().substring(0, 200); // Use first 200 chars for comparison
+      //   const advertiser = (ad.advertiser || '').trim().toLowerCase();
 
-        // Use a combination of headline + body snippet + advertiser for deduplication
-        // This is more robust than using image URLs which might vary
-        const key = `${headline}_${body}_${advertiser}`;
+      //   // Use a combination of headline + body snippet + advertiser for deduplication
+      //   // This is more robust than using image URLs which might vary
+      //   const key = `${headline}_${body}_${advertiser}`;
 
-        if (this.seenAds.has(key)) {
-          // Log duplicate detection for debugging (but limit repetitive logs)
-          if ((headline || body) && Math.random() < 0.1) { // Only log 10% of duplicates to reduce spam
-            logger.debug(`Duplicate ad skipped: ${advertiser} - ${headline.substring(0, 30)}...`);
-          }
-          return false;
-        }
+      //   if (this.seenAds.has(key)) {
+      //     // Log duplicate detection for debugging (but limit repetitive logs)
+      //     if ((headline || body) && Math.random() < 0.1) { // Only log 10% of duplicates to reduce spam
+      //       logger.debug(`Duplicate ad skipped: ${advertiser} - ${headline.substring(0, 30)}...`);
+      //     }
+      //     return false;
+      //   }
 
-        // Add to both Set and Array for sliding window management
-        this.seenAds.add(key);
-        this.seenAdsArray.push(key);
+      //   // Add to both Set and Array for sliding window management
+      //   this.seenAds.add(key);
+      //   this.seenAdsArray.push(key);
 
-        // Implement sliding window: remove oldest entries if cache exceeds limit
-        if (this.seenAdsArray.length > this.maxSeenAdsCache) {
-          const oldestKey = this.seenAdsArray.shift();
-          this.seenAds.delete(oldestKey);
-          if (this.seenAdsArray.length % 100 === 0) {
-            logger.debug(`🧹 Sliding window: Removed oldest ad from cache (cache size: ${this.seenAds.size})`);
-          }
-        }
+      //   // Implement sliding window: remove oldest entries if cache exceeds limit
+      //   if (this.seenAdsArray.length > this.maxSeenAdsCache) {
+      //     const oldestKey = this.seenAdsArray.shift();
+      //     this.seenAds.delete(oldestKey);
+      //     if (this.seenAdsArray.length % 100 === 0) {
+      //       logger.debug(`🧹 Sliding window: Removed oldest ad from cache (cache size: ${this.seenAds.size})`);
+      //     }
+      //   }
 
-        return true;
-      });
+      //   return true;
+      // });
+
+      // SHOW ALL ADS WITHOUT FILTERING
+      const newAds = ads;
 
       if (newAds.length > 0) {
         // Reset consecutive no-new-ads counter

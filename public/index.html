@@ -770,29 +770,41 @@
                         // Initialize adsData if needed
                         if (!adsData) adsData = [];
 
-                        // Create a map of existing ads for duplicate checking
-                        const existingAdsMap = new Map();
-                        adsData.forEach(ad => {
-                            const key = `${ad.advertiser || ad.sponsor || ''}_${ad.headline || ad.heading || ''}_${ad.timestamp || ''}`;
-                            existingAdsMap.set(key, ad);
-                        });
+                        // OPTION: Disable duplicate filtering to show all ads
+                        // Set this to true to see ALL ads including duplicates
+                        const SHOW_ALL_ADS = true;
 
-                        // Filter out duplicates before adding
-                        const uniqueNewAds = data.newAds.filter(newAd => {
-                            const key = `${newAd.advertiser || newAd.sponsor || ''}_${newAd.headline || newAd.heading || ''}_${newAd.timestamp || ''}`;
+                        let uniqueNewAds = [];
 
-                            // Also check by ID if available
-                            const hasId = adsData.some(existingAd =>
-                                existingAd.id && newAd.id && existingAd.id === newAd.id
-                            );
+                        if (SHOW_ALL_ADS) {
+                            // Show all ads without filtering - just add them
+                            console.log(`✅ SHOW_ALL_ADS mode: Adding all ${data.newAds.length} ads without filtering`);
+                            uniqueNewAds = data.newAds;
+                        } else {
+                            // Original duplicate filtering logic
+                            const existingAdsMap = new Map();
+                            adsData.forEach(ad => {
+                                const key = `${ad.advertiser || ad.sponsor || ''}_${ad.headline || ad.heading || ''}_${ad.timestamp || ''}`;
+                                existingAdsMap.set(key, ad);
+                            });
 
-                            return !existingAdsMap.has(key) && !hasId;
-                        });
+                            // Filter out duplicates before adding
+                            uniqueNewAds = data.newAds.filter(newAd => {
+                                const key = `${newAd.advertiser || newAd.sponsor || ''}_${newAd.headline || newAd.heading || ''}_${newAd.timestamp || ''}`;
+
+                                // Also check by ID if available
+                                const hasId = adsData.some(existingAd =>
+                                    existingAd.id && newAd.id && existingAd.id === newAd.id
+                                );
+
+                                return !existingAdsMap.has(key) && !hasId;
+                            });
+                        }
 
                         if (uniqueNewAds.length > 0) {
-                            console.log(`Adding ${uniqueNewAds.length} unique new ads (filtered ${data.newAds.length - uniqueNewAds.length} duplicates)`);
+                            console.log(`Adding ${uniqueNewAds.length} ads to display${SHOW_ALL_ADS ? ' (all ads, no filtering)' : ` (filtered ${data.newAds.length - uniqueNewAds.length} duplicates)`}`);
 
-                            // Add only unique new ads
+                            // Add new ads
                             adsData.push(...uniqueNewAds);
 
                             // Redisplay all ads (including new ones)
@@ -999,6 +1011,55 @@
             }
         }
 
+        // Auto-refresh interval for real-time updates
+        let autoRefreshInterval = null;
+        const AUTO_REFRESH_INTERVAL = 5000; // 5 seconds
+
+        function startAutoRefresh() {
+            // Clear any existing interval
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+            }
+
+            // Start periodic refresh
+            autoRefreshInterval = setInterval(async () => {
+                console.log('🔄 [AUTO_REFRESH] Fetching latest ads...');
+
+                // Get current session from dropdown
+                const sessionSelector = document.getElementById('sessionSelector');
+                const currentSession = sessionSelector ? sessionSelector.value : '';
+
+                try {
+                    // Fetch latest ads without showing loading indicator
+                    const url = currentSession ? `/api/ads?session=${currentSession}` : '/api/ads';
+                    const response = await fetch(url);
+                    const latestAds = await response.json();
+
+                    console.log(`📊 [AUTO_REFRESH] Fetched ${latestAds.length} ads`);
+
+                    // Only update if we have new data
+                    if (latestAds.length > 0 && (!adsData || latestAds.length !== adsData.length)) {
+                        console.log(`✨ [AUTO_REFRESH] Updating display (${adsData?.length || 0} → ${latestAds.length})`);
+                        adsData = latestAds;
+                        displayAds(adsData);
+                        updateStats(adsData);
+                    }
+                } catch (error) {
+                    console.warn('⚠️ [AUTO_REFRESH] Failed to fetch ads:', error.message);
+                }
+            }, AUTO_REFRESH_INTERVAL);
+
+            console.log(`✅ [AUTO_REFRESH] Started auto-refresh every ${AUTO_REFRESH_INTERVAL/1000}s`);
+        }
+
+        function stopAutoRefresh() {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+                autoRefreshInterval = null;
+                console.log('🛑 [AUTO_REFRESH] Stopped auto-refresh');
+            }
+        }
+
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', async () => {
             console.log('🚀 [PAGE_LOAD] Initializing page...');
@@ -1020,20 +1081,23 @@
             console.log('🔍 [PAGE_LOAD] Checking for active extractions...');
             await checkActiveExtractions();
 
-            // If no active extraction was found, load all ads
+            // If no active extraction was found, load current session ads
             if (!currentExtractionId) {
-                console.log('📂 [PAGE_LOAD] No active extraction - loading all ads');
-                loadAds();
+                console.log('📂 [PAGE_LOAD] No active extraction - loading current session ads');
+                await loadAds(''); // Load current session
             } else {
                 console.log('✅ [PAGE_LOAD] Active extraction found - ads already loaded');
             }
 
             updateSessionInfo();
 
+            // Start auto-refresh for real-time updates
+            startAutoRefresh();
+
             // Set up form submission
             document.getElementById('extractionForm').addEventListener('submit', startExtraction);
 
-            console.log('✅ [PAGE_LOAD] Page initialization complete');
+            console.log('✅ [PAGE_LOAD] Page initialization complete with auto-refresh enabled');
         });
 
         async function startExtraction(e) {

@@ -875,31 +875,42 @@ class ForYouAdExtractor {
             return extractedAds;
         });
 
+        // ============================================================================
+        // DUPLICATE FILTERING DISABLED - SHOW ALL ADS
+        // ============================================================================
         // Filter duplicates - use more specific key for ForYou ads
-        const newAds = [];
-        for (const ad of ads) {
-            // Create a more unique key that includes container ID for ForYou ads
-            let key = `${ad.advertiser}_${ad.headline}_${ad.body}`;
+        // const newAds = [];
+        // for (const ad of ads) {
+        //     // Create a more unique key that includes container ID for ForYou ads
+        //     let key = `${ad.advertiser}_${ad.headline}_${ad.body}`;
 
-            // For ForYou ads, include container ID to avoid false duplicates
-            if (ad.adType === 'ForYou' && ad.containerId) {
-                key = `${ad.containerId}_${ad.advertiser}_${ad.headline}`;
-            }
+        //     // For ForYou ads, include container ID to avoid false duplicates
+        //     if (ad.adType === 'ForYou' && ad.containerId) {
+        //         key = `${ad.containerId}_${ad.advertiser}_${ad.headline}`;
+        //     }
 
-            // For ads with minimal content, use iframe src as part of key
-            if ((!ad.headline || !ad.body) && ad.iframeSrc) {
-                key = `${ad.advertiser}_${ad.iframeSrc}`;
-            }
+        //     // For ads with minimal content, use iframe src as part of key
+        //     if ((!ad.headline || !ad.body) && ad.iframeSrc) {
+        //         key = `${ad.advertiser}_${ad.iframeSrc}`;
+        //     }
 
-            if (!this.seenAds.has(key)) {
-                this.seenAds.add(key);
-                newAds.push(ad);
-                logger.info(`✅ New ad extracted: ${ad.advertiser || 'Unknown'} - ${ad.headline || ad.body || ad.containerId || 'ForYou Ad'}`);
-            } else {
-                logger.debug(`Duplicate ad skipped: ${ad.advertiser} - ${ad.headline}...`);
-            }
-        }
+        //     if (!this.seenAds.has(key)) {
+        //         this.seenAds.add(key);
+        //         newAds.push(ad);
+        //         logger.info(`✅ New ad extracted: ${ad.advertiser || 'Unknown'} - ${ad.headline || ad.body || ad.containerId || 'ForYou Ad'}`);
+        //     } else {
+        //         logger.debug(`Duplicate ad skipped: ${ad.advertiser} - ${ad.headline}...`);
+        //     }
+        // }
 
+        // return newAds;
+
+        // SHOW ALL ADS WITHOUT FILTERING
+        const newAds = ads;
+        logger.info(`✅ Extracted ${newAds.length} ads (filtering disabled - showing all)`);
+        newAds.forEach(ad => {
+            logger.info(`  📦 ${ad.advertiser || 'Unknown'} - ${ad.headline || ad.body || ad.containerId || 'ForYou Ad'}`);
+        });
         return newAds;
     }
 
