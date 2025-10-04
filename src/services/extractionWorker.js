@@ -967,8 +967,14 @@ class WorkerAdExtractor {
   }
 
   async initializeBrowser() {
+    // Check if running in production/deployment mode
+    const isProduction = process.env.NODE_ENV === 'production' ||
+                         process.env.DEPLOYMENT === 'true' ||
+                         !process.env.DISPLAY;
+
     // TRY ADSPOWER FIRST (if available and running), then fallback to Puppeteer
-    const useAdsPower = workerData.useAdsPower !== false; // Default to true
+    // Only use AdsPower in development/offline mode, NOT in production/deployment
+    const useAdsPower = !isProduction && workerData.useAdsPower !== false;
 
     if (useAdsPower) {
       try {
@@ -1095,10 +1101,6 @@ class WorkerAdExtractor {
     }
 
     // FALLBACK: Launch Puppeteer browser (original code)
-    const isProduction = process.env.NODE_ENV === 'production' ||
-                         process.env.DEPLOYMENT === 'true' ||
-                         !process.env.DISPLAY;
-
     logger.info(`🖥️ Browser Mode: ${isProduction ? 'Headless (Server/Production)' : 'GUI (Development)'}`);
 
     let browserLaunched = false;
