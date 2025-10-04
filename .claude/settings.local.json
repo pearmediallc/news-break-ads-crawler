@@ -31,7 +31,10 @@
       "Bash(where chrome)",
       "Read(//c/Users/pearm/Downloads/**)",
       "Read(//c/Users/pearm/OneDrive/Desktop/news-break-ads-scroller-version1.3/**)",
-      "Bash(awk:*)"
+      "Bash(awk:*)",
+      "Bash(for func in refreshAds loadSession applyTimeFilter exportData exportExcel startMultiThreadExtraction stopMultiThreadExtraction loadMultiThreadStats logout createNewSession)",
+      "Bash(do echo -n \"$func: \")",
+      "Bash(done)"
     ],
     "deny": [],
     "ask": []
