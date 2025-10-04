@@ -412,12 +412,12 @@
             </form>
         </div>
 
-        <div class="status-panel hidden" id="statusPanel">
+        <div class="status-panel" id="statusPanel">
             <div class="status-header">
                 <h3>Extraction Status</h3>
                 <div>
                     <span class="status-badge" id="statusBadge">Idle</span>
-                    <button class="btn btn-danger" id="stopBtn" onclick="stopExtraction()" disabled>
+                    <button class="btn btn-danger" id="stopBtn" onclick="stopExtraction()" disabled style="display: none;">
                         Stop
                     </button>
                 </div>
@@ -426,7 +426,10 @@
                 <h4 style="font-size: 16px; font-weight: 600; color: #374151; margin: 0;">📝 Live Logs</h4>
             </div>
             <div class="logs-container" id="logsContainer">
-                <div>Waiting for extraction to start...</div>
+                <div class="log-entry">
+                    <span style="color: #999; font-size: 0.8em;">[System]</span>
+                    <span style="color: #666;">No extraction running. Start an extraction to see live logs.</span>
+                </div>
             </div>
         </div>
 
@@ -738,9 +741,10 @@
             const stopBtn = document.getElementById('stopBtn');
             const logsContainer = document.getElementById('logsContainer');
 
-            if (statusPanel) {
-                statusPanel.classList.remove('hidden');
-            }
+            // Status panel is always visible now - no need to show/hide
+            // if (statusPanel) {
+            //     statusPanel.classList.remove('hidden');
+            // }
 
             if (statusBadge) {
                 statusBadge.textContent = extraction.status === 'resumable' ? 'Resumable' : 'Running';
@@ -1192,8 +1196,12 @@
                 if (response.ok) {
                     currentExtractionId = data.extractionId;
                     showStatus('running', `Extraction started (ID: ${currentExtractionId})`);
-                    document.getElementById('statusPanel').classList.remove('hidden');
-                    document.getElementById('stopBtn').disabled = false;
+                    // Status panel is always visible now
+                    const stopBtn = document.getElementById('stopBtn');
+                    if (stopBtn) {
+                        stopBtn.style.display = 'inline-block';
+                        stopBtn.disabled = false;
+                    }
 
                     // Initialize logs container
                     const logsContainer = document.getElementById('logsContainer');
@@ -1231,7 +1239,11 @@
                     window.currentExtractionId = null;
                     stopStatusMonitoring();
                     showStatus('idle', 'No active extraction');
-                    document.getElementById('stopBtn').disabled = true;
+                    const stopBtn = document.getElementById('stopBtn');
+                    if (stopBtn) {
+                        stopBtn.style.display = 'none';
+                        stopBtn.disabled = true;
+                    }
                     return;
                 }
 
@@ -1280,7 +1292,7 @@
                         window.currentExtractionId = null;
                         stopStatusMonitoring();
                         showStatus('idle', 'No active extraction');
-                        document.getElementById('stopBtn').disabled = true;
+                        const stopBtn = document.getElementById('stopBtn'); if (stopBtn) { stopBtn.style.display = 'none'; stopBtn.disabled = true; }
                         return;
                     }
 
@@ -1312,7 +1324,7 @@
                 statusCheckInterval = null;
             }
             document.getElementById('startBtn').disabled = false;
-            document.getElementById('stopBtn').disabled = true;
+            const stopBtn = document.getElementById('stopBtn'); if (stopBtn) { stopBtn.style.display = 'none'; stopBtn.disabled = true; }
         }
 
         function updateStatus(statusData) {
