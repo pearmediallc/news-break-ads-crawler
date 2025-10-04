@@ -1834,7 +1834,8 @@
             }
         }
 
-        async function testDatabaseHealth() {
+        // Make function globally accessible
+        window.testDatabaseHealth = async function testDatabaseHealth() {
             console.log('🩺 Testing database health...');
 
             try {
@@ -1864,7 +1865,8 @@
             }
         }
 
-        async function loadAllFromDatabase() {
+        // Make function globally accessible
+        window.loadAllFromDatabase = async function loadAllFromDatabase() {
             console.log('Loading ads from database...');
             document.getElementById('adsLoading').classList.add('active');
 
@@ -2439,35 +2441,7 @@
             }
         }
 
-        // Auto-refresh ads - faster when extraction is running
-        // autoRefreshInterval already declared at top of script
-        const startAutoRefresh = () => {
-            if (autoRefreshInterval) clearInterval(autoRefreshInterval);
-
-            // Check status badge to determine if extraction is running
-            const checkAndRefresh = () => {
-                const isRunning = document.getElementById('statusBadge')?.textContent === 'running';
-                const sessionSelector = document.getElementById('sessionSelector');
-
-                if (isRunning) {
-                    // When running, always load current session (empty string = current)
-                    loadAds('');
-                } else if (sessionSelector && sessionSelector.value) {
-                    // When not running, load selected session
-                    loadAds(sessionSelector.value);
-                } else {
-                    // Default to current session
-                    loadAds('');
-                }
-                loadStats();
-            };
-
-            // Faster refresh when extraction is running
-            const isRunning = document.getElementById('statusBadge')?.textContent === 'running';
-            const interval = isRunning ? 5000 : 30000;
-
-            autoRefreshInterval = setInterval(checkAndRefresh, interval);
-        };
+        // Note: startAutoRefresh is already defined above - don't redefine it here
 
         // Start auto-refresh and update interval when status changes
         startAutoRefresh();
