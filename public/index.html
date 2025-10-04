@@ -385,6 +385,20 @@
                         <option value="unlimited">♾️ Unlimited (Until Stopped)</option>
                     </select>
                 </div>
+                <div class="form-group" id="threadCountGroup" style="display: none;">
+                    <label for="threadCount">Number of Workers <small style="color: #999; font-weight: normal;">(parallel threads)</small></label>
+                    <select id="threadCount">
+                        <option value="1">1 Worker (Single Thread)</option>
+                        <option value="2">2 Workers</option>
+                        <option value="3">3 Workers</option>
+                        <option value="5" selected>5 Workers (Recommended)</option>
+                        <option value="7">7 Workers</option>
+                        <option value="10">10 Workers (Max)</option>
+                    </select>
+                    <small style="color: #666; display: block; margin-top: 5px;">
+                        💡 More workers = faster extraction but higher resource usage
+                    </small>
+                </div>
                 <div class="form-group" id="durationGroup">
                     <label for="duration">Duration (min) <small style="color: #999; font-weight: normal;">(max: 7 days)</small></label>
                     <input
@@ -1117,6 +1131,7 @@
             const duration = document.getElementById('duration').value;
             const deviceMode = document.getElementById('deviceMode').value;
             const extractionMode = document.getElementById('extractionMode').value;
+            const threadCount = document.getElementById('threadCount').value;
 
             // Disable start button
             document.getElementById('startBtn').disabled = true;
@@ -1156,7 +1171,13 @@
                 // Now start extraction
                 const response = await authFetch('/api/extract/start', {
                     method: 'POST',
-                    body: JSON.stringify({ url, duration, deviceMode, extractionMode })
+                    body: JSON.stringify({
+                        url,
+                        duration,
+                        deviceMode,
+                        extractionMode,
+                        maxWorkers: parseInt(threadCount) || 5
+                    })
                 });
 
                 const data = await response.json();
@@ -2106,18 +2127,23 @@
             return div.innerHTML;
         }
 
-        // Toggle duration field based on extraction mode
+        // Toggle duration field and thread count selector based on extraction mode
         function toggleDurationField() {
             const extractionMode = document.getElementById('extractionMode').value;
             const durationGroup = document.getElementById('durationGroup');
             const durationInput = document.getElementById('duration');
+            const threadCountGroup = document.getElementById('threadCountGroup');
 
             if (extractionMode === 'unlimited') {
+                // Hide duration, show thread count selector
                 durationGroup.style.display = 'none';
                 durationInput.removeAttribute('required');
+                threadCountGroup.style.display = 'block';
             } else {
+                // Show duration, hide thread count selector
                 durationGroup.style.display = 'block';
                 durationInput.setAttribute('required', 'required');
+                threadCountGroup.style.display = 'none';
             }
         }
 

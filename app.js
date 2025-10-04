@@ -204,6 +204,14 @@ app.post('/api/extract/start', requireAuth, requireAdmin, async (req, res) => {
         });
     }
 
+    // Validate worker count (1-10)
+    const workerCount = parseInt(maxWorkers) || 5;
+    if (workerCount < 1 || workerCount > 10) {
+        return res.status(400).json({
+            error: 'Worker count must be between 1 and 10.'
+        });
+    }
+
     const extractionId = Date.now().toString();
     const durationMinutes = extractionMode === 'unlimited' ? null : (parseInt(duration) || 5);
 
