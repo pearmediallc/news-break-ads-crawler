@@ -649,9 +649,12 @@
                 const response = await authFetch('/api/extract/active');
                 const data = await response.json();
 
+                console.log('🔍 [ACTIVE_CHECK] Checking for active extractions:', data);
+
                 if (data.success && data.activeExtractions.length > 0) {
                     // Show extraction window for the first active extraction
                     const activeExtraction = data.activeExtractions[0];
+                    console.log('✅ [ACTIVE_CHECK] Found active extraction:', activeExtraction);
 
                     // Use the proper showExtractionWindow function to ensure all UI elements are shown
                     showExtractionWindow(activeExtraction);
@@ -667,6 +670,7 @@
                             if (selector.options[i].value === sessionFile ||
                                 selector.options[i].value === activeExtraction.sessionId) {
                                 selector.selectedIndex = i;
+                                console.log('✅ [ACTIVE_CHECK] Selected session in dropdown:', sessionFile);
                                 break;
                             }
                         }
@@ -678,6 +682,7 @@
                     // Show success message
                     showAlert('info', `🔄 Reconnected to active extraction: ${activeExtraction.id}`);
                 } else {
+                    console.log('ℹ️ [ACTIVE_CHECK] No active extractions found');
                     // No active extractions - clear any stale extraction IDs
                     currentExtractionId = null;
                     window.currentExtractionId = null;
@@ -743,8 +748,9 @@
             // Handle different extraction states
             if (extraction.status === 'resumable') {
                 showResumableExtraction(extraction);
-            } else if (['running', 'starting'].includes(extraction.status)) {
-                // Show stop button for running extractions
+            } else if (!['completed', 'stopped', 'failed'].includes(extraction.status)) {
+                // Show stop button for ALL active extractions (not just running/starting)
+                // This includes: running, starting, extracting, paused, etc.
                 if (stopBtn) {
                     stopBtn.style.display = 'inline-block';
                     stopBtn.disabled = false;
