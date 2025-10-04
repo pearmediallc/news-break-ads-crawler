@@ -188,7 +188,13 @@ class BackgroundExtractionService {
 
   async getActiveExtractions() {
     const activeExtractions = Array.from(this.activeExtractions.values())
-      .filter(extraction => ['running', 'starting', 'resumable'].includes(extraction.status));
+      .filter(extraction => {
+        // Only return extractions that have an active worker OR are in certain states
+        const hasActiveWorker = extraction.worker && !extraction.worker.terminated;
+        const isActiveStatus = !['completed', 'stopped'].includes(extraction.status);
+
+        return hasActiveWorker && isActiveStatus;
+      });
 
     return activeExtractions;
   }
