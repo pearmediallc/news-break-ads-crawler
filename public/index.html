@@ -422,6 +422,9 @@
                     </button>
                 </div>
             </div>
+            <div style="margin-top: 15px; margin-bottom: 10px;">
+                <h4 style="font-size: 16px; font-weight: 600; color: #374151; margin: 0;">📝 Live Logs</h4>
+            </div>
             <div class="logs-container" id="logsContainer">
                 <div>Waiting for extraction to start...</div>
             </div>
@@ -531,9 +534,44 @@
         let statusCheckInterval = null;
         let adsData = [];
 
+        // Helper function to get auth headers
+        function getAuthHeaders() {
+            const token = localStorage.getItem('token');
+            const headers = {
+                'Content-Type': 'application/json'
+            };
+            if (token) {
+                headers['Authorization'] = `Bearer ${token}`;
+            }
+            return headers;
+        }
+
+        // Helper function for authenticated fetch
+        async function authFetch(url, options = {}) {
+            const token = localStorage.getItem('token');
+            const defaultOptions = {
+                credentials: 'include', // Include cookies
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token && { 'Authorization': `Bearer ${token}` })
+                }
+            };
+
+            const mergedOptions = {
+                ...defaultOptions,
+                ...options,
+                headers: {
+                    ...defaultOptions.headers,
+                    ...(options.headers || {})
+                }
+            };
+
+            return fetch(url, mergedOptions);
+        }
+
         // Logout function
         function logout() {
-            fetch('/api/auth/logout')
+            authFetch('/api/auth/logout', { method: 'POST' })
                 .then(() => {
                     localStorage.removeItem('token');
                     localStorage.removeItem('user');
@@ -595,7 +633,7 @@
         async function checkActiveExtractions() {
             try {
                 console.log('🔍 [ACTIVE_CHECK] Fetching active extractions...');
-                const response = await fetch('/api/extract/active');
+                const response = await authFetch('/api/extract/active');
                 const data = await response.json();
 
                 if (data.success && data.activeExtractions.length > 0) {
@@ -665,7 +703,7 @@
 
         async function checkSessionActiveExtraction(sessionFile) {
             try {
-                const response = await fetch('/api/extract/active');
+                const response = await authFetch('/api/extract/active');
                 const data = await response.json();
 
                 if (data.success && data.activeExtractions.length > 0) {
@@ -898,7 +936,7 @@
         async function loadSessionAdsFromDatabase(sessionId) {
             try {
                 // Query all ads for this session from database
-                const response = await fetch('/api/query/ads/query', {
+                const response = await authFetch('/api/query/ads/query', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -1113,11 +1151,8 @@
 
             try {
                 // First create a new session
-                const sessionResponse = await fetch('/api/sessions/new', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
+                const sessionResponse = await authFetch('/api/sessions/new', {
+                    method: 'POST'
                 });
 
                 if (!sessionResponse.ok) {
@@ -1147,11 +1182,8 @@
                 }, 2000);
 
                 // Now start extraction
-                const response = await fetch('/api/extract/start', {
+                const response = await authFetch('/api/extract/start', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
                     body: JSON.stringify({ url, duration, deviceMode, extractionMode })
                 });
 
@@ -1188,7 +1220,7 @@
             if (!currentExtractionId) return;
 
             try {
-                const response = await fetch(`/api/extract/stop/${currentExtractionId}`, {
+                const response = await authFetch(`/api/extract/stop/${currentExtractionId}`, {
                     method: 'POST'
                 });
 
@@ -1391,7 +1423,7 @@
                 fileGroup.label = '📁 Recent File Sessions';
 
                 // Get current session to mark it
-                const currentResponse = await fetch('/api/sessions/current');
+                const currentResponse = await authFetch('/api/sessions/current');
                 let currentSessionFile = null;
                 if (currentResponse.ok) {
                     const currentSession = await currentResponse.json();
@@ -1401,7 +1433,7 @@
                 }
 
                 // Get active extractions to mark them
-                const activeResponse = await fetch('/api/extract/active');
+                const activeResponse = await authFetch('/api/extract/active');
                 let activeExtractions = [];
                 if (activeResponse.ok) {
                     const activeData = await activeResponse.json();
@@ -1451,7 +1483,7 @@
             if (sessionFile) {
                 // Switch to selected session
                 try {
-                    const response = await fetch('/api/sessions/switch', {
+                    const response = await authFetch('/api/sessions/switch', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json'
@@ -1638,7 +1670,7 @@
 
         async function createNewSession() {
             try {
-                const response = await fetch('/api/sessions/new', {
+                const response = await authFetch('/api/sessions/new', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -1679,7 +1711,7 @@
                 // If "Current Session" is selected or nothing is selected
                 if (!sessionToLoad || sessionToLoad === '' || sessionToLoad === 'current') {
                     // Check for active extraction first
-                    const activeResponse = await fetch('/api/extract/active');
+                    const activeResponse = await authFetch('/api/extract/active');
                     if (activeResponse.ok) {
                         const activeData = await activeResponse.json();
                         if (activeData.success && activeData.activeExtractions && activeData.activeExtractions.length > 0) {
@@ -1693,7 +1725,7 @@
 
                     // If still no session, try to get current session
                     if (!sessionToLoad) {
-                        const currentSessionResponse = await fetch('/api/sessions/current');
+                        const currentSessionResponse = await authFetch('/api/sessions/current');
                         if (currentSessionResponse.ok) {
                             const currentSessionData = await currentSessionResponse.json();
                             if (currentSessionData && currentSessionData.sessionFile) {
@@ -1794,7 +1826,7 @@
             console.log('🩺 Testing database health...');
 
             try {
-                const response = await fetch('/api/query/health');
+                const response = await authFetch('/api/query/health');
                 const result = await response.json();
 
                 console.log('📊 Database health results:', result);
@@ -1849,7 +1881,7 @@
                 console.log('Filters:', filters);
 
                 // Query ads from database
-                const response = await fetch('/api/query/ads/query', {
+                const response = await authFetch('/api/query/ads/query', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -1929,7 +1961,7 @@
 
         async function updateSessionInfo() {
             try {
-                const response = await fetch('/api/sessions/current');
+                const response = await authFetch('/api/sessions/current');
                 if (response.ok) {
                     const session = await response.json();
                     if (session) {
@@ -1938,7 +1970,7 @@
                         const dateStr = date.toLocaleDateString();
 
                         // Also get current ads count
-                        const adsResponse = await fetch('/api/ads');
+                        const adsResponse = await authFetch('/api/ads');
                         const ads = await adsResponse.json();
                         const adsCount = ads ? ads.length : 0;
 
@@ -2190,7 +2222,7 @@
         async function filterSessionByTimeRange(sessionFile, fromTime, toTime) {
             try {
                 // First load the full session
-                const sessionResponse = await fetch(`/api/ads?session=${sessionFile}`);
+                const sessionResponse = await authFetch(`/api/ads?session=${sessionFile}`);
                 const sessionAds = await sessionResponse.json();
 
                 // Filter by time range
@@ -2222,7 +2254,7 @@
         // Filter all ads by time range (database query)
         async function filterAllByTimeRange(fromTime, toTime) {
             try {
-                const response = await fetch('/api/query/ads/query', {
+                const response = await authFetch('/api/query/ads/query', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
